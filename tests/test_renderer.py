@@ -7,7 +7,7 @@ import pytest
 from PIL import Image, ImageChops
 
 import miq
-from miq_fonts import FONT_DIR, find_font, find_italic_font, font_at
+from miq_fonts import FONT_DIR, coverage, find_font, find_italic_font, font_at
 from miq_text import EmojiImages, MixedFont, fit
 from miq_words import GRAPHEME, NO_END, NO_START, units
 
@@ -309,3 +309,32 @@ def test_concurrent_render_requests(tmp_path):
     with ThreadPoolExecutor(max_workers=4) as pool:
         results = list(pool.map(run, range(4)))
     assert len(set(results)) == 1
+
+
+def test_caches_are_reused_but_never_shared_by_callers():
+    from miq_images import edge_mask
+
+    path = FONT_DIR / "NotoSansJP.ttf"
+    assert font_at(path, 24) is font_at(path, 24)
+    assert font_at(path, 24) is not font_at(path, 25)
+    assert font_at(path, 24) is not font_at(path, 24, 800)
+
+    mask = edge_mask((40, 30), 4)
+    centre = (mask.width // 2, mask.height // 2)
+    assert mask.getpixel(centre) > 0
+    mask.putpixel(centre, 0)
+    assert edge_mask((40, 30), 4).getpixel(centre) > 0
+
+    background = miq.dark_background((320, 180))
+    background.putpixel((10, 10), (255, 0, 0, 255))
+    assert miq.dark_background((320, 180)).getpixel((10, 10)) != (255, 0, 0, 255)
+
+
+def test_coverage_matches_the_font_cmap():
+    from fontTools.ttLib import TTFont
+
+    path = str(FONT_DIR / "NotoSansJP.ttf")
+    with TTFont(path, fontNumber=0, lazy=True) as font:
+        expected = frozenset(font.getBestCmap() or {})
+    assert expected
+    assert coverage(path) == expected

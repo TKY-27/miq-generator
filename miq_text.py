@@ -82,7 +82,6 @@ class MixedFont:
         self.editorial = editorial
         self._emoji_advance = self.px * (1.1 if editorial else 1.245)
         self._metrics = OrderedDict()
-        self._glyph_metrics = OrderedDict()
         self._complex = None
 
     @property
@@ -140,15 +139,19 @@ class MixedFont:
                     yield part, face, None, self.glyph_metrics(face, part)[0]
 
     def glyph_metrics(self, face, text):
-        key = (id(face), text)
-        if key in self._glyph_metrics:
-            self._glyph_metrics.move_to_end(key)
-            return self._glyph_metrics[key]
+        """Metrics belong to the face, so the cache travels with the face handle."""
+
+        cache = getattr(face, "_miq_glyph_metrics", None)
+        if cache is None:
+            cache = face._miq_glyph_metrics = OrderedDict()
+        if text in cache:
+            cache.move_to_end(text)
+            return cache[text]
         result = face.getlength(text), face.getbbox(text, anchor="ls")
         if len(text) <= 1024:
-            self._glyph_metrics[key] = result
-            if len(self._glyph_metrics) > 128:
-                self._glyph_metrics.popitem(last=False)
+            cache[text] = result
+            if len(cache) > 128:
+                cache.popitem(last=False)
         return result
 
     def measure(self, text):
