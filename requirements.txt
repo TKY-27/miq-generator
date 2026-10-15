@@ -1,1 +1,8 @@
 Pillow>=10.0,<13
+regex>=2024.11.6,<2027
+emoji>=2.16,<3
+Janome>=0.5,<0.6
+fonttools>=4.55,<5
+pangocffi>=0.14.1,<0.15
+pangocairocffi>=0.7,<0.8
+cairocffi>=1.7,<2

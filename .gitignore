@@ -6,3 +6,7 @@ venv/
 *.log
 quote.png
 output/
+fonts/*.ttf
+fonts/*.OFL.txt
+.pytest_cache/
+.ruff_cache/
