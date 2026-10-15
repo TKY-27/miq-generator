@@ -111,6 +111,7 @@ CPU処理をイベントループで直接実行せず、`await asyncio.to_threa
 ```bash
 pip install pytest
 python -m pytest -q
+python scripts/benchmark.py   # 主要な構図の描画時間（ウォーム時）を計測
 ```
 
 単語改行、結合文字、絵文字キャッシュ、長文末尾、1px未満の縮小、多言語、各構図・画像比率、

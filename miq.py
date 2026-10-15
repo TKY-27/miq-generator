@@ -7,6 +7,7 @@ import argparse
 import os
 import random
 import re
+from functools import lru_cache
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter
@@ -118,7 +119,8 @@ def resolve_align(value=None) -> str:
     return raw if raw in ALIGN_CHOICES else "right"
 
 
-def dark_background(size: tuple[int, int]) -> Image.Image:
+@lru_cache(maxsize=4)
+def _background_layer(size: tuple[int, int]) -> Image.Image:
     w, h = size
     kx, ky = w / BASE_SIZE[0], h / BASE_SIZE[1]
     bg = Image.new("RGB", size, (0, 1, 2))
@@ -128,6 +130,11 @@ def dark_background(size: tuple[int, int]) -> Image.Image:
     gd.ellipse((-320 * kx, -125 * ky, 1160 * kx, 1220 * ky), fill=(0, 70, 130, 26))
     layer = layer.filter(ImageFilter.GaussianBlur(max(1, int(255 * min(kx, ky)))))
     return Image.alpha_composite(bg.convert("RGBA"), layer)
+
+
+def dark_background(size: tuple[int, int]) -> Image.Image:
+    # The glow only depends on the canvas size; callers paint over their own copy.
+    return _background_layer(tuple(size)).copy()
 
 
 def text_region(width: int, height: int, has_credit: bool, align: str = "right"):
@@ -205,9 +212,6 @@ def font_makers(images, font_file=None, bold_font_file=None, latin_override=None
     jp, latin, serif = editorial_fonts()
     body = find_font(font_file or os.getenv("MIQ_FONT") or jp)
     author = find_font(bold_font_file or serif)
-    ui = "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"
-    if not Path(ui).is_file():
-        ui = find_font(None)
 
     def quote(px):
         english = (
@@ -227,9 +231,17 @@ def font_makers(images, font_file=None, bold_font_file=None, latin_override=None
         return MixedFont(font_at(author, px, 600), images.path, images=images)
 
     def handle(px):
-        return MixedFont(font_at(ui, px), images.path, images=images)
+        return MixedFont(font_at(_ui_font(), px), images.path, images=images)
 
     return quote, name, handle
+
+
+@lru_cache(maxsize=1)
+def _ui_font():
+    """The handle line is optional, so its font lookup only runs when it is drawn."""
+
+    ui = "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"
+    return ui if Path(ui).is_file() else find_font(None)
 
 
 def render(
@@ -354,7 +366,7 @@ def render(
             canvas = canvas.resize(target, Image.Resampling.LANCZOS)
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
-    canvas.convert("RGB").save(output, format="PNG", optimize=True)
+    canvas.convert("RGB").save(output, format="PNG")
 
 
 def editorial(

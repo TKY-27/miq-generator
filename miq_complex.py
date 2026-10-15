@@ -2,7 +2,6 @@
 
 import ctypes
 import ctypes.util
-import io
 import threading
 from collections import OrderedDict
 from functools import lru_cache
@@ -103,13 +102,24 @@ class BitmapTiles:
         self.ctx.paint()
         self.ctx.restore()
 
+    def compose(self):
+        """Composite the surface onto the canvas without a PNG round-trip."""
+
+        self.surface.flush()
+        premultiplied = Image.frombuffer(
+            "RGBa",
+            (self.surface.get_width(), self.surface.get_height()),
+            self.surface.get_data(),
+            "raw",
+            "BGRa",
+            self.surface.get_stride(),
+            1,
+        )
+        self.canvas.alpha_composite(premultiplied.convert("RGBA"))
+
     def __exit__(self, *exc):
         if exc[0] is None:
-            stream = io.BytesIO()
-            self.surface.write_to_png(stream)
-            stream.seek(0)
-            with Image.open(stream) as image:
-                self.canvas.alpha_composite(image.convert("RGBA"))
+            self.compose()
         self.surface.finish()
         self.cache.clear()
 

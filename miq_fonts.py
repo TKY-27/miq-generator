@@ -12,8 +12,11 @@ from PIL import ImageFont
 FONT_DIR = Path(__file__).resolve().parent / "fonts"
 
 
-def font_at(path, px, weight=None):
-    font = ImageFont.truetype(str(path), max(1, round(px)))
+@lru_cache(maxsize=64)
+def _font(path: str, px: int, weight):
+    """Reuse FreeType handles: the binary search asks for the same sizes again."""
+
+    font = ImageFont.truetype(path, px)
     if weight is not None:
         try:
             axes = font.get_variation_axes()
@@ -31,9 +34,20 @@ def font_at(path, px, weight=None):
     return font
 
 
+def font_at(path, px, weight=None):
+    return _font(str(path), max(1, round(px)), weight)
+
+
 @lru_cache(maxsize=12)
 def coverage(path):
+    """Codepoints the face can draw; synthesised glyph names keep cmap parsing cheap."""
+
     with TTFont(str(path), fontNumber=0, lazy=True) as font:
+        try:
+            count = font["maxp"].numGlyphs
+        except (KeyError, AttributeError):
+            return frozenset(font.getBestCmap() or {})
+        font.setGlyphOrder(["glyph%.5d" % index for index in range(count)])
         return frozenset(font.getBestCmap() or {})
 
 
@@ -102,6 +116,13 @@ def find_font(custom: str | None, bold: bool = False) -> str:
     from_env = os.getenv("MIQ_FONT")
     if from_env:
         return find_font(from_env, bold)
+
+    return _system_font(bold)
+
+
+@lru_cache(maxsize=8)
+def _system_font(bold: bool = False) -> str:
+    """Path probes and ``fc-match`` are process-wide; run them once per process."""
 
     candidates = []
     for name in FONT_CHOICES:
