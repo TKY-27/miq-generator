@@ -1,139 +1,123 @@
-# MIQ-style Quote Generator
+# MIQ Generator
 
-アイコン画像と引用文から「Make it a Quote」風の PNG を作る小さな Python ツールです。
-**Pillow と日本語フォントだけで動き、画像生成AIも外部APIも使いません。**
+画像と引用文からPNGを作る、オフラインのPython描画器です。Discord Botからも呼び出せます。
 
-![生成例](demo.png)
+![現行レイアウト](demo.png)
 
-*上の画像は `python miq.py --avatar demo-avatar.png --text "…" --size 640x360` で生成したものです
-（デモのアイコンはこのリポジトリで合成したもので、第三者の画像は使っていません）。*
+## 表示と改行
 
-## 特徴
+- 標準の抽選は **現行50% / Aの左右反転30% / Cの誌面風15% / Bのポスター風5%**。
+  `--layout` で固定、`--seed` で抽選を再現できます。
+- **現行50%の構成・配置を維持**し、フォントは他の構図と統一しています。
+- 全4構図で Noto Sans JP ExtraBold、Playfair Display Bold、Noto Serif JP SemiBold を使います。
+  欧文は斜体ではなく、太い正体セリフが標準です。
+- 日本語は単語と付属語、欧文は単語、絵文字は結合列をまとめて改行します。
+  例えば「じゃあ8時間ホモにな／るか」は「じゃあ8時間ホモに／なるか」になります。
+- **文字数上限・最低フォントサイズはありません。** 全文を対象に、縦横比を保って縮小します。
+  1px未満の文字も仮想座標で配置し、巨大な中間画像を作らず描画します。縦だけの圧縮や末尾の省略はしません。
+- 長いURLや単語も途中で割らないため、その語が収まるまで全体の文字サイズが小さくなります。
+  固定画素数では極端な長文は読めません。処理できる量は実行環境の時間・メモリにも依存します。
+- アラビア語・ヘブライ語の双方向表示、インド系文字の連結、他言語のフォント補完はPangoで処理します。
+  対応フォントが必要です。欠落する文字を検出した場合は導入を案内します。
+- Unicode絵文字は色付き。肌色、国旗、ZWJ、キーキャップに対応します。
+  Discord独自絵文字はIDに対応する画像を渡します。PNG出力なのでアニメーションは最初のフレームです。
+- アイコンは1:1で四辺を薄くフェード。`--attachment` は添付画像の縦横比を保って配置します。
 
-- **出力サイズを指定できる**（既定 `640x360`）。レイアウトはすべてサイズに比例して縮む
-- **長文でも縦は伸ばさない**。入る最大の文字サイズを探し、それでも入らないときは
-  本文を縦に縮めて収める（省略しないので、どれだけ長くても本文は全部入る）
-- **本文の寄せ方を選べる**（アイコンの右側 / 画面中央）
-- **絵文字は色つき**（Noto Color Emoji）、**欧文は斜体**で描く
-- Discord の**サーバー絵文字**（`<:name:id>`）も画像として貼れる
-- 禁則処理つき（句読点を行頭に置かない・開き括弧を行末に残さない）
+![追加3構成](demo-layouts.png)
 
-## 必要環境
+## 導入（Python 3.10以上 / Linux・Docker）
 
-- Python 3.10 以降
-- Pillow（`requirements.txt`）
-- 日本語を表示できるフォント（Noto Sans CJK、游ゴシック、ヒラギノ角ゴシックなど）
-
-Linux では `sudo apt install fonts-noto-cjk` などで導入してください。
-色つき絵文字を使う場合は Noto Color Emoji、欧文の斜体を使う場合は
-Noto Sans Italic なども入れておくと自動検出します。
-フォントファイルはこのリポジトリに含めません。
-
-## インストール
+Ubuntu/Debian:
 
 ```bash
+sudo apt-get install libpango-1.0-0 libpangocairo-1.0-0 libcairo2 libfontconfig1 \
+  fonts-noto-core fonts-noto-cjk fonts-noto-color-emoji
 python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
+source .venv/bin/activate
 pip install -r requirements.txt
+python scripts/setup_fonts.py
 ```
 
-## 使い方
+`setup_fonts.py` は承認済みフォントとOFLライセンスを一度だけ取得し、固定SHA-256を確認します。
+フォント本体はGitに含めません。取得後の画像生成にネット接続・画像生成AI・外部APIは不要です。
+より広い文字種が必要なら `fonts-noto-extra` も導入してください。
+Windows/macOSでは同じPython APIを利用できますが、Pango/Cairo/Fontconfigの別途導入が必要です。
 
-画像と本文だけで生成できます。
+Docker:
 
 ```bash
-python miq.py --avatar avatar.png --text "AIが人類を超える日は近い。" --output quote.png
+docker build -t miq-generator .
+docker run --rm --network none -v "$PWD:/data" miq-generator \
+  --avatar /data/demo-avatar.png --text '小さな発見が、明日を変える。' \
+  --name '投稿者' --output /data/quote.png
 ```
 
-表示名とユーザー名も入れる場合:
+## CLI
 
 ```bash
-python miq.py --avatar avatar.png --text "引用したい本文" \
-  --name "AM09:21" --handle "AM09_21" --output quote.png
+# 従来の引数を維持。構図を固定したい場合は --layout classic
+python miq.py --avatar avatar.png --text '引用したい本文' \
+  --name '表示名' --handle 'username' --layout classic -o quote.png
+
+# 添付画像・UTF-8本文ファイル・HD出力
+python miq.py --image photo.jpg --attachment --text-file quote.txt \
+  --layout mirrored --size 1920x1080 -o quote.png
 ```
 
-改行や長文をそのまま渡したい場合は、UTF-8 のテキストファイルを使います。
-
-```bash
-python miq.py --avatar avatar.png --text-file quote.txt --name "投稿者名" --output quote.png
-```
-
-サイズと本文の寄せ方を指定する場合:
-
-```bash
-python miq.py --avatar avatar.png --text-file quote.txt \
-  --size 854x480 --align center --output quote.png
-```
-
-フォントが自動検出できない場合:
-
-```bash
-python miq.py --avatar avatar.png --text-file quote.txt \
-  --font "/path/to/NotoSansCJK-Regular.ttc" --bold-font "/path/to/NotoSansCJK-Bold.ttc"
-```
-
-## オプション
-
-| オプション | 既定 | 説明 |
-| --- | --- | --- |
-| `--avatar`, `--image` | （必須） | 投稿者のアイコン（PNG / JPEG / WebP など） |
-| `--text`, `--quote` | （必須） | 表示する本文 |
-| `--text-file` | | 本文を UTF-8 ファイルから読む（`--text` とは排他） |
-| `--name` | 空 | 表示名（省略可） |
-| `--handle` | 空 | `@ユーザー名`（省略可。先頭の `@` は付けても付けなくてもよい） |
-| `--output`, `-o` | `quote.png` | 出力先 |
-| `--size` | `640x360` | 出力サイズ（`854x480` / `1280x720` / `1920x1080` など） |
-| `--align` | `right` | 本文の寄せ方。`right`=アイコンの右側へ寄せる / `center`=画面中央 |
-| `--font` | 自動検出 | 本文のフォント |
-| `--bold-font` | 自動検出 | 表示名のフォント |
-| `--emoji-font` | 自動検出 | 色つき絵文字フォント |
-| `--italic-font` | 自動検出 | 欧文の斜体フォント |
-
-## 環境変数
-
-コマンドラインで指定しないときは、環境変数でも指定できます。
-
-| 変数 | 対応するオプション |
+| オプション | 説明 |
 | --- | --- |
-| `MIQ_SIZE` | `--size` |
-| `MIQ_TEXT_ALIGN` | `--align` |
-| `MIQ_FONT` | `--font` |
-| `MIQ_EMOJI_FONT` | `--emoji-font` |
-| `MIQ_ITALIC_FONT` | `--italic-font` |
+| `--avatar`, `--image` | 画像パス（必須）。PNG/JPEG/WebP/GIFなどPillowが読める画像 |
+| `--text`, `--quote` / `--text-file` | 本文またはUTF-8ファイル。どちらか一方が必須 |
+| `--name`, `--handle` | 表示名とユーザー名（省略可能） |
+| `--output`, `-o` | 出力先。既定 `quote.png` |
+| `--size` | `640x360`（既定）、`854x480`、`1920x1080`など |
+| `--layout` | `auto`（既定）、`classic`、`mirrored`、`magazine`、`literary` |
+| `--seed` | 自動抽選用の整数シード |
+| `--attachment` | アイコン用の正方形切り抜きをせず、添付画像として配置 |
+| `--align` | 現行構図の `right`（既定）/ `center` |
+| `--font`, `--bold-font` | 本文と表示名のフォントファイルを指定 |
+| `--emoji-font` | 絵文字フォントを指定 |
+| `--italic-font` | 現行構図の欧文フォントを明示的に上書き（従来オプションを維持） |
 
-## ライブラリとして使う
+従来の環境変数 `MIQ_SIZE`、`MIQ_TEXT_ALIGN`、`MIQ_FONT`、`MIQ_EMOJI_FONT`、
+`MIQ_ITALIC_FONT` も利用できます。全構図の標準フォントは `fonts/` に配置します。
+
+## Python / Discord Bot
 
 ```python
 from pathlib import Path
 from miq import render
 
-render(Path("avatar.png"), "本文", Path("quote.png"), "表示名", "handle",
-       size="640x360", align="right")
+render(Path('avatar.png'), '本文 👩🏽‍💻 <:wave:123>', Path('quote.png'),
+       '表示名', 'username', size='640x360',
+       custom_emojis={'123': Path('wave.png')})
+
+# 添付画像をアイコンの代わりに使う
+render(Path('photo.jpg'), '本文', Path('quote.png'), '表示名',
+       attachment=True, layout='mirrored')
 ```
 
-Discord のサーバー絵文字を貼るときは、`custom_emojis` に `{絵文字ID: 画像パス}` を渡します
-（画像が無いときは `:name:` と文字で表示します）。
+`render()` の既存の位置引数と戻り値（`None`）は維持しています。
+`layout`、`seed`、`attachment` はキーワード専用の追加引数です。
+同じフォント・入力・固定構図・描画ライブラリのバージョンなら同じ画像を再生成できます。
 
-```python
-render(avatar, "やった<:koshian:123>", output, custom_emojis={"123": "emoji.png"})
+このリポジトリにはDiscordのコマンド受信部分は含まれていません。返信で `miq` を受け取るBot側から、
+返信先の本文・著者名・handle・アイコンまたは添付画像を渡してください。
+独自絵文字もBot側で保存して `custom_emojis` に渡します。画像が渡されない独自絵文字は `:name:` で表示します。
+CPU処理をイベントループで直接実行せず、`await asyncio.to_thread(render, ...)` などで呼び出せます。
+
+## 検証
+
+```bash
+pip install pytest
+python -m pytest -q
 ```
 
-## レイアウトの決まり方
+単語改行、結合文字、絵文字キャッシュ、長文末尾、1px未満の縮小、多言語、各構図・画像比率、
+CLI/API、抽選、再現性を検証します。
 
-1. 出力サイズに対する本文の領域（アイコンの右側）を決める
-2. その領域に収まる**最大の文字サイズを二分探索**で探す
-3. 最小サイズでも縦に入らないときは、**本文を縦に縮めて収める**（文字は潰れる）
-4. それでも横幅に収まらない行は、禁則処理を保ったまま1文字ずつ折り返す
+![長文の例](demo-long.png)
 
-本文は省略しません。画像の縦横比も変わりません。
-
-長い本文でも縦は伸びず、文字が潰れてでも全部入ります。
-
-![長い本文の例](demo-long.png)
-
-## 注意
-
-- このツールは「Make it a Quote」風のレイアウトを独自実装したもので、
-  公式 Bot との連携や完全再現ではありません。
-- 第三者のアイコンや引用文を、意図せずリポジトリへコミットしないでください
-  （`.gitignore` で `quote.png` と `output/` は除外しています）。
+デモにはリポジトリ内で合成した `demo-avatar.png` を使用しています。
+第三者の投稿・アイコンや生成物を誤ってコミットしないよう、`quote.png`、`output/` はGitの対象外です。
+本ツールはMake it a Quote風の独自実装で、公式Botではありません。

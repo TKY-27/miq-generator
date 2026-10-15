@@ -1,0 +1,38 @@
+[
+  {
+    "name": "NotoSansJP.ttf",
+    "path": "ofl/notosansjp/NotoSansJP[wght].ttf",
+    "license": "ofl/notosansjp/OFL.txt",
+    "sha256": "c2f3b4d463500a2ddcd3849cded1fceeb9fd6d1c32e6cbecd568453ba50fc68f",
+    "repository": "google/fonts",
+    "revision": "2750b521bd22ce141f12617194ab0e04cf5d12d5",
+    "license_sha256": "1c05c68c34f9708415aada51f17e1b0092d2cea709bf4a94cd38114f9e73d7d9"
+  },
+  {
+    "name": "PlayfairDisplay.ttf",
+    "path": "ofl/playfairdisplay/PlayfairDisplay[wght].ttf",
+    "license": "ofl/playfairdisplay/OFL.txt",
+    "sha256": "c40f2293766a503bc70cce9e512ef844a4ccb7cbcde792fe2ea31d191917d8d6",
+    "repository": "google/fonts",
+    "revision": "2750b521bd22ce141f12617194ab0e04cf5d12d5",
+    "license_sha256": "566be814f8e96e93dfa16101331557eb6b5467e9e03f627c0910fe93ca12300e"
+  },
+  {
+    "name": "NotoSerifJP.ttf",
+    "path": "ofl/notoserifjp/NotoSerifJP[wght].ttf",
+    "license": "ofl/notoserifjp/OFL.txt",
+    "sha256": "2fd527ba12b6a44ec30d796d633360da0aeba6c5d4af1304ce12bb4dc15a7dfc",
+    "repository": "google/fonts",
+    "revision": "2750b521bd22ce141f12617194ab0e04cf5d12d5",
+    "license_sha256": "5e0da210fb04058a8c0087985d2d456b931c2579811a49655721d3cf0c36b6d6"
+  },
+  {
+    "name": "NotoColorEmoji.ttf",
+    "path": "2D/fonts/NotoColorEmoji.ttf",
+    "license": "2D/fonts/LICENSE",
+    "sha256": "15671215ab769fdc7162a045d56fd7d7e477c51b04e6b3c761d914d8fdd6cc44",
+    "repository": "googlefonts/noto-emoji",
+    "revision": "e20cbc2bbec1926686be9f9bee7d1d2cfa1fea0e",
+    "license_sha256": "6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2"
+  }
+]
