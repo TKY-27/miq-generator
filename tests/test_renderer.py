@@ -1,3 +1,4 @@
+import io
 import random
 import subprocess
 import sys
@@ -7,7 +8,14 @@ import pytest
 from PIL import Image, ImageChops
 
 import miq
-from miq_fonts import FONT_DIR, coverage, find_font, find_italic_font, font_at
+from miq_fonts import (
+    FONT_DIR,
+    bundled_fonts,
+    coverage,
+    find_font,
+    find_italic_font,
+    font_at,
+)
 from miq_text import EmojiImages, MixedFont, fit
 from miq_words import GRAPHEME, NO_END, NO_START, units
 
@@ -500,3 +508,79 @@ def test_short_phrases_use_few_long_columns():
 
     layout = vertical.fit_vertical("今日も一日がんばるぞい", 1300, 860, 250)
     assert len(layout.columns) == 2
+
+
+# A single run with no space to break at (a long URL) shrinks the quote until its
+# ink box is thinner than the accent rule the mirror layout draws beside it.
+LONG_WORD = "https://example.com/" + "a" * 120
+
+
+@pytest.mark.parametrize("size", [None, (640, 360), (200, 120), (1920, 1080)])
+def test_mirror_layout_keeps_a_long_unbreakable_word_inside_its_rule(size):
+    out = io.BytesIO()
+    miq.render(AVATAR, LONG_WORD, out, "名前", "@handle", size=size, layout="mirror")
+    assert Image.open(io.BytesIO(out.getvalue())).size == (size or miq.SIZE)
+
+
+def test_mirror_layout_handles_a_long_word_under_every_auto_seed():
+    for seed in range(40):
+        out = io.BytesIO()
+        miq.render(AVATAR, LONG_WORD, out, "名前", "@handle", layout="auto", seed=seed)
+        assert out.getvalue().startswith(b"\x89PNG")
+
+
+def test_mirror_rule_never_inverts_for_any_hard_text():
+    """The rule's two ends both come from the quote's ink box, so guard the
+    whole family of inputs that can clock in under ``ctx.s(10)``."""
+
+    for text in ("a" * 2000, "b" * 400, LONG_WORD, "x" * 90):
+        for size in (None, (640, 360), (200, 120)):
+            out = io.BytesIO()
+            miq.render(AVATAR, text, out, size=size, layout="mirror")
+            assert out.getvalue().startswith(b"\x89PNG")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "😀\n😀",
+        "🎉🎉\n🎉🎉",
+        "مرحبا\nمرحبا",
+        "𠮷野家\n𠮷野家",  # CJK extension B: outside Saitamaar's repertoire
+        "😀 すごい\n😀 すごい",
+    ],
+)
+def test_texts_the_aa_face_cannot_draw_are_not_ascii_art(text):
+    import miq_aa
+
+    assert miq_aa.detect(text) is None
+    ctx = _ctx(text)
+    assert ctx.aa is None  # drawn by the normal text path, emoji and all
+    out = io.BytesIO()
+    miq.render(AVATAR, text, out, "名前", "@handle", layout="mirror")
+    assert Image.open(io.BytesIO(out.getvalue())).size == miq.SIZE
+
+
+@pytest.mark.parametrize("name", ["mona.txt", "tux.txt", "dragon.txt"])
+def test_real_ascii_art_is_still_detected_as_ascii_art(name):
+    import miq_aa
+
+    text = (AA_DIR / name).read_text()
+    detected = miq_aa.detect(text, bundled_fonts())
+    assert detected is not None
+    assert detected[0] == ("sjis" if name == "mona.txt" else "mono")
+    assert _ctx(text).aa is not None
+
+
+def test_fenced_code_keeps_spacing_but_still_needs_drawable_glyphs():
+    import miq_aa
+
+    assert miq_aa.detect("```txt\n a  b\nc\n```") == ("mono", [" a  b", "c"])
+    assert miq_aa.detect("```txt\n😀\n😀\n```") is None
+
+
+def _ctx(text):
+    from miq_layouts import Ctx
+    from miq_text import EmojiImages
+
+    return Ctx(Image.new("RGB", (64, 64)), text, "", "", miq.SIZE, EmojiImages(None))

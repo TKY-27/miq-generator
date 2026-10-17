@@ -118,7 +118,7 @@ class Ctx:
     def aa(self):
         """``(mode, lines)`` when the text is ASCII art, else ``None``."""
 
-        return miq_aa.detect(self.text)
+        return miq_aa.detect(self.text, self.fonts)
 
     @cached_property
     def glyphs(self):
@@ -501,8 +501,13 @@ def mirror(ctx):
     else:
         box = (ctx.x(150), ctx.y(130), ctx.x(1020), ctx.y(780 if credit else 950))
         ink, _ = quote(canvas, ctx, SANS_BOLD, box, white, ctx.s(200))
+    # A single unbreakable run (a long URL) shrinks the quote to a sliver, which
+    # can make ink[3] fall above ink[1] + ctx.s(10): keep the rule at least two
+    # pixels tall instead of letting the two ends cross.
+    top = ink[1] + ctx.s(10)
+    bottom = max(top + max(2, ctx.s(10)), ink[3] - ctx.s(4))
     ImageDraw.Draw(canvas).rectangle(
-        (ctx.x(96), ink[1] + ctx.s(10), ctx.x(96) + max(2, ctx.s(10)), ink[3] - ctx.s(4)),
+        (ctx.x(96), top, ctx.x(96) + max(2, ctx.s(10)), bottom),
         fill=bright,
     )
     y = min(ink[3] + ctx.s(96), h - ctx.s(120))

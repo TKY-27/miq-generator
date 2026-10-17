@@ -17,7 +17,7 @@ from functools import lru_cache
 
 from PIL import Image, ImageDraw
 
-from miq_fonts import font_at
+from miq_fonts import bundled_fonts, coverage, font_at
 
 FENCE = re.compile(r"\A\s*```[^\n`]*\n(.*?)\n?```\s*\Z", re.S)
 # Box drawing, blocks and shades are drawn by monospace fonts on the cell grid.
@@ -35,10 +35,12 @@ def strip_fence(text):
     return (matched.group(1), True) if matched else (text, False)
 
 
-def detect(text):
+def detect(text, fonts=None):
     """Return ``(mode, art)`` for ASCII art, else ``None``.
 
     ``mode`` is ``"mono"`` (ASCII/box drawing) or ``"sjis"`` (proportional AA).
+    ``fonts`` is the role -> path mapping from ``bundled_fonts()``; it is looked
+    up lazily so ``detect`` also works on its own.
     """
 
     body, fenced = strip_fence(text)
@@ -72,7 +74,25 @@ def detect(text):
         # Saitamaar draws U+005C as a yen sign, as MS PGothic did; Discord shows a
         # backslash. U+2216 is a backslash with the same advance.
         lines = [line.replace("\\", "\u2216") for line in lines]
+    # Every glyph of the block comes from one face, so a character that face
+    # cannot draw disappears without a trace. Emoji, Arabic and CJK outside the
+    # AA repertoire belong to the normal text path, which has emoji and fallback
+    # faces; only art the AA face can actually draw is treated as art.
+    if not _drawable("".join(lines), "mono" if mono else "aa", fonts):
+        return None
     return ("mono" if mono else "sjis"), lines
+
+
+def _drawable(text, role, fonts):
+    """True when the single face for ``role`` can draw every visible character."""
+
+    if fonts is None:
+        try:
+            fonts = bundled_fonts()
+        except (OSError, ValueError):
+            return True  # No bundled faces: nothing to check against.
+    cmap = coverage(fonts[role])
+    return all(char.isspace() or ord(char) in cmap for char in text)
 
 
 def _symbolic(char):
