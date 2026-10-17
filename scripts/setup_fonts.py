@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Install the approved OFL fonts once. Rendering itself never uses the network."""
+"""Install the approved fonts once. Rendering itself never uses the network.
+
+Every file is fetched from a pinned commit and checked against its SHA-256. All
+fonts are SIL OFL 1.1 except Saitamaar (public domain, for ASCII art).
+"""
 
 import hashlib
 import json
@@ -19,7 +23,11 @@ def install():
         prefix = f"https://raw.githubusercontent.com/{font['repository']}/{font['revision']}/"
         assets = [
             (font["path"], font["name"], font["sha256"]),
-            (font["license"], font["name"] + ".OFL.txt", font["license_sha256"]),
+            (
+                font["license"],
+                font["name"] + font.get("license_name", ".OFL.txt"),
+                font["license_sha256"],
+            ),
         ]
         for source, name, expected in assets:
             target = destination / name

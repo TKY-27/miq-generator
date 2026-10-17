@@ -1,8 +1,10 @@
 """Font discovery, glyph coverage and real font weights."""
 
+import hashlib
 import os
 import shutil
 import subprocess
+from array import array
 from functools import lru_cache
 from pathlib import Path
 
@@ -12,7 +14,7 @@ from PIL import ImageFont
 FONT_DIR = Path(__file__).resolve().parent / "fonts"
 
 
-@lru_cache(maxsize=64)
+@lru_cache(maxsize=384)
 def _font(path: str, px: int, weight):
     """Reuse FreeType handles: the binary search asks for the same sizes again."""
 
@@ -38,10 +40,37 @@ def font_at(path, px, weight=None):
     return _font(str(path), max(1, round(px)), weight)
 
 
-@lru_cache(maxsize=12)
+@lru_cache(maxsize=32)
 def coverage(path):
-    """Codepoints the face can draw; synthesised glyph names keep cmap parsing cheap."""
+    """Codepoints the face can draw.
 
+    Parsing a CJK cmap takes tens of milliseconds, so the result is also kept on
+    disk (keyed by path, size and mtime) for short-lived CLI processes.
+    """
+
+    stat = os.stat(path)
+    key = hashlib.blake2s(
+        f"{os.path.abspath(path)}\0{stat.st_size}\0{stat.st_mtime_ns}".encode(),
+        digest_size=10,
+    ).hexdigest()
+    cached = FONT_DIR / ".cache" / f"{key}.cmap"
+    try:
+        return frozenset(array("I", cached.read_bytes()))
+    except (OSError, ValueError):
+        pass
+    result = _parse_coverage(path)
+    try:
+        cached.parent.mkdir(exist_ok=True)
+        temporary = cached.with_suffix(f".{os.getpid()}.tmp")
+        temporary.write_bytes(array("I", sorted(result)).tobytes())
+        temporary.replace(cached)
+    except OSError:
+        pass  # A read-only install still works, just without the disk cache.
+    return result
+
+
+def _parse_coverage(path):
+    # Synthesised glyph names keep cmap parsing cheap.
     with TTFont(str(path), fontNumber=0, lazy=True) as font:
         try:
             count = font["maxp"].numGlyphs
@@ -51,19 +80,39 @@ def coverage(path):
         return frozenset(font.getBestCmap() or {})
 
 
-def editorial_fonts():
-    paths = [
-        FONT_DIR / name
-        for name in ("NotoSansJP.ttf", "PlayfairDisplay.ttf", "NotoSerifJP.ttf")
-    ]
-    missing = [p.name for p in paths if not p.is_file()]
+# Roles used by the layouts; files are fetched by scripts/setup_fonts.py.
+FONT_FILES = {
+    "mincho": "ShipporiMinchoB1-ExtraBold.ttf",
+    "gothic": "ZenKakuGothicNew-Bold.ttf",
+    "gothic-medium": "ZenKakuGothicNew-Medium.ttf",
+    "display": "DelaGothicOne-Regular.ttf",
+    "mono-jp": "MPLUS1Code.ttf",
+    "mono": "JetBrainsMono.ttf",
+    "sans": "Inter.ttf",
+    "italic": "CormorantGaramond-Italic.ttf",
+    "serif": "InstrumentSerif-Regular.ttf",
+    "serif-italic": "InstrumentSerif-Italic.ttf",
+    "condensed": "Anton-Regular.ttf",
+    "brush": "YujiSyuku-Regular.ttf",
+    "blackletter": "UnifrakturMaguntia-Book.ttf",
+    "aa": "Saitamaar-Regular.ttf",
+    "fallback": "NotoSansJP.ttf",
+}
+
+
+@lru_cache(maxsize=1)
+def bundled_fonts():
+    """Check every bundled face once per process and return role -> path."""
+
+    paths = {role: FONT_DIR / name for role, name in FONT_FILES.items()}
+    missing = sorted({p.name for p in paths.values() if not p.is_file()})
     if missing:
         raise ValueError(
             "標準フォントがありません: "
             + ", ".join(missing)
             + "。python scripts/setup_fonts.py を実行してください。"
         )
-    return tuple(map(str, paths))
+    return {role: str(path) for role, path in paths.items()}
 
 
 EMOJI_FONT_CHOICES = [

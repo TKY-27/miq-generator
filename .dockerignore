@@ -8,3 +8,5 @@ output
 quote.png
 fonts/*.ttf
 fonts/*.OFL.txt
+fonts/*.LICENSE.md
+fonts/.cache/

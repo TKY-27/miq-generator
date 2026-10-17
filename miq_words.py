@@ -11,6 +11,7 @@ GRAPHEME = regex.compile(r"<a?:[A-Za-z0-9_]+:[0-9]+>|\X")
 LATIN = regex.compile(r"[\p{Latin}\p{N}][\p{Latin}\p{M}\p{N}._/@:#’\x27+\-]*")
 JAPANESE = regex.compile(r"[\p{Han}\p{Hiragana}\p{Katakana}ー]+")
 KANA = regex.compile(r"[\p{Hiragana}\p{Katakana}]")
+EDITORIAL_LATIN = regex.compile(r"[\p{Latin}\p{N}\p{M}\x20-\x7e]+")
 NO_START = set(
     "、。，．：；？！゛゜ヽヾゝゞ々ー）］｝〕〉》」』】〙〗〟’”｠»・ぁぃぅぇぉっゃゅょァィゥェォッャュョ"
 )
@@ -24,6 +25,7 @@ def tokenizer():
     return Tokenizer()
 
 
+@lru_cache(maxsize=4096)
 def is_emoji(text):
     # Text presentation selectors explicitly request an ordinary glyph.
     return not text.endswith("\ufe0e") and emoji.is_emoji(text)
@@ -95,15 +97,26 @@ def units(text):
 
 
 def runs(text, editorial=False):
-    """Keep classic Latin styling; never split a grapheme or custom emoji."""
+    """Keep classic Latin styling; never split a grapheme or custom emoji.
+
+    Measurement asks for the same rows many times, so results are memoised.
+    """
+    if len(text) > 512:
+        return tuple(_runs(text, editorial))
+    return _cached_runs(text, editorial)
+
+
+@lru_cache(maxsize=8192)
+def _cached_runs(text, editorial):
+    return tuple(_runs(text, editorial))
+
+
+def _runs(text, editorial=False):
     plain = []
 
     def flush():
         chunk = "".join(plain)
-        if editorial:
-            pattern = regex.compile(r"[\p{Latin}\p{N}\p{M}\x20-\x7e]+")
-        else:
-            pattern = LATIN
+        pattern = EDITORIAL_LATIN if editorial else LATIN
         start = 0
         for match in pattern.finditer(chunk):
             if match.start() > start:
