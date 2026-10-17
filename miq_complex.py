@@ -12,6 +12,7 @@ import pangocffi as pango
 from PIL import Image, ImageColor, ImageDraw
 
 from miq_fonts import font_at
+from miq_images import put
 from miq_words import CUSTOM, GRAPHEME, JAPANESE, runs, units
 
 _FONTCONFIG_LOCK = threading.Lock()
@@ -115,7 +116,7 @@ class BitmapTiles:
             self.surface.get_stride(),
             1,
         )
-        self.canvas.alpha_composite(premultiplied.convert("RGBA"))
+        put(self.canvas, premultiplied.convert("RGBA"))
 
     def __exit__(self, *exc):
         if exc[0] is None:

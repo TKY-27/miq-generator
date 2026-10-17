@@ -1,5 +1,132 @@
 [
   {
+    "name": "ShipporiMinchoB1-ExtraBold.ttf",
+    "path": "ofl/shipporiminchob1/ShipporiMinchoB1-ExtraBold.ttf",
+    "license": "ofl/shipporiminchob1/OFL.txt",
+    "sha256": "bee99a242f32128e8d6a4acff2b3f1742cd42ea90748758e6e10456871887e76",
+    "repository": "google/fonts",
+    "revision": "2750b521bd22ce141f12617194ab0e04cf5d12d5",
+    "license_sha256": "41fba056279be5f45ff9a99e44b7b53897b42732f5806d8e666e0ab49ac6bd38"
+  },
+  {
+    "name": "ZenKakuGothicNew-Bold.ttf",
+    "path": "ofl/zenkakugothicnew/ZenKakuGothicNew-Bold.ttf",
+    "license": "ofl/zenkakugothicnew/OFL.txt",
+    "sha256": "0081cedabc4921982fcd061f845a005664ac7fb642af2dd34b4007bc63ccd235",
+    "repository": "google/fonts",
+    "revision": "2750b521bd22ce141f12617194ab0e04cf5d12d5",
+    "license_sha256": "0fac78a235c98d640cb06332eb5362c211d86fa03c011df438c35005d22ad2c7"
+  },
+  {
+    "name": "ZenKakuGothicNew-Medium.ttf",
+    "path": "ofl/zenkakugothicnew/ZenKakuGothicNew-Medium.ttf",
+    "license": "ofl/zenkakugothicnew/OFL.txt",
+    "sha256": "651a3f7280b7f36262601ee76d8388a8dc4372dcc67aff025a608939a562b525",
+    "repository": "google/fonts",
+    "revision": "2750b521bd22ce141f12617194ab0e04cf5d12d5",
+    "license_sha256": "0fac78a235c98d640cb06332eb5362c211d86fa03c011df438c35005d22ad2c7"
+  },
+  {
+    "name": "DelaGothicOne-Regular.ttf",
+    "path": "ofl/delagothicone/DelaGothicOne-Regular.ttf",
+    "license": "ofl/delagothicone/OFL.txt",
+    "sha256": "4ff87a0965f1b0505e5a2c58424bc6ad3cff27e56a82f21c2fc9d6b0e3857ee2",
+    "repository": "google/fonts",
+    "revision": "2750b521bd22ce141f12617194ab0e04cf5d12d5",
+    "license_sha256": "c0014792d4f4abc0508c295b277f2b17ae44465c8dc88d12af9cea48279b5fda"
+  },
+  {
+    "name": "MPLUS1Code.ttf",
+    "path": "ofl/mplus1code/MPLUS1Code[wght].ttf",
+    "license": "ofl/mplus1code/OFL.txt",
+    "sha256": "ff68678c5bd7e9d9d6ab6d57e4355aabe30f6b8f8bff9bd59baf6a7807dcfd36",
+    "repository": "google/fonts",
+    "revision": "2750b521bd22ce141f12617194ab0e04cf5d12d5",
+    "license_sha256": "04971e3fcee60b247395150d93b3616f6a0b092572332c96187b472976553abc"
+  },
+  {
+    "name": "Inter.ttf",
+    "path": "ofl/inter/Inter[opsz,wght].ttf",
+    "license": "ofl/inter/OFL.txt",
+    "sha256": "29160a80ff49ddcab2c97711247e08b1fab27a484a329ce8b813d820dc559031",
+    "repository": "google/fonts",
+    "revision": "2750b521bd22ce141f12617194ab0e04cf5d12d5",
+    "license_sha256": "5b9321a4298cfeb6b34354164a1c3afc3db114569984c502b9b35d988fd58c57"
+  },
+  {
+    "name": "CormorantGaramond-Italic.ttf",
+    "path": "ofl/cormorantgaramond/CormorantGaramond-Italic[wght].ttf",
+    "license": "ofl/cormorantgaramond/OFL.txt",
+    "sha256": "0f48ea6abb2084537854f7174c470991a463b13036309e3b50a81511611c530d",
+    "repository": "google/fonts",
+    "revision": "2750b521bd22ce141f12617194ab0e04cf5d12d5",
+    "license_sha256": "60700d351cac4650c51f3f9db318d2a420f8b45052dba2715eb5fec41f0f6956"
+  },
+  {
+    "name": "InstrumentSerif-Regular.ttf",
+    "path": "ofl/instrumentserif/InstrumentSerif-Regular.ttf",
+    "license": "ofl/instrumentserif/OFL.txt",
+    "sha256": "498efd461f6ddfcb7a111bf9a565709d2085d48201d501ead960d93e84ffbb88",
+    "repository": "google/fonts",
+    "revision": "2750b521bd22ce141f12617194ab0e04cf5d12d5",
+    "license_sha256": "129ed7618959716959f2941fdd5b49e0ad6e6c1d78726761786a00253d865521"
+  },
+  {
+    "name": "InstrumentSerif-Italic.ttf",
+    "path": "ofl/instrumentserif/InstrumentSerif-Italic.ttf",
+    "license": "ofl/instrumentserif/OFL.txt",
+    "sha256": "08939b8bdf534afec24ae0ef5e03f948940cd9a8fe08e7fecbad040e62327385",
+    "repository": "google/fonts",
+    "revision": "2750b521bd22ce141f12617194ab0e04cf5d12d5",
+    "license_sha256": "129ed7618959716959f2941fdd5b49e0ad6e6c1d78726761786a00253d865521"
+  },
+  {
+    "name": "JetBrainsMono.ttf",
+    "path": "ofl/jetbrainsmono/JetBrainsMono[wght].ttf",
+    "license": "ofl/jetbrainsmono/OFL.txt",
+    "sha256": "48715a42ec242c21e9f02692891e147d022299a52e48d5e413e1a942193ffeda",
+    "repository": "google/fonts",
+    "revision": "2750b521bd22ce141f12617194ab0e04cf5d12d5",
+    "license_sha256": "b2fe5e8987594e9ffd1d2ca52a2f5d73eb8335243893c5d6254b5ad69269591d"
+  },
+  {
+    "name": "Anton-Regular.ttf",
+    "path": "ofl/anton/Anton-Regular.ttf",
+    "license": "ofl/anton/OFL.txt",
+    "sha256": "a4ba3a92350ebb031da0cb47630ac49eb265082ca1bc0450442f4a83ab947cab",
+    "repository": "google/fonts",
+    "revision": "2750b521bd22ce141f12617194ab0e04cf5d12d5",
+    "license_sha256": "ee67e6ee22790b7929f1a3769ca2801d565c64b5a9096942c1adf5596de9c9e4"
+  },
+  {
+    "name": "YujiSyuku-Regular.ttf",
+    "path": "ofl/yujisyuku/YujiSyuku-Regular.ttf",
+    "license": "ofl/yujisyuku/OFL.txt",
+    "sha256": "82728ebafc8c97391e2dab633414a806f344b8e4e2227d307179f07b548fca61",
+    "repository": "google/fonts",
+    "revision": "2750b521bd22ce141f12617194ab0e04cf5d12d5",
+    "license_sha256": "ef7c85c72ae94381c8bc4832ae4e6fbabdeafa2bb8a31313cd75dce95a690256"
+  },
+  {
+    "name": "UnifrakturMaguntia-Book.ttf",
+    "path": "ofl/unifrakturmaguntia/UnifrakturMaguntia-Book.ttf",
+    "license": "ofl/unifrakturmaguntia/OFL.txt",
+    "sha256": "d64afc0547059dd2e4a78da48bda0aba0a9901be58c7f8c201a8b2b6b4492cc8",
+    "repository": "google/fonts",
+    "revision": "2750b521bd22ce141f12617194ab0e04cf5d12d5",
+    "license_sha256": "96199bf9ff12dd471a66911dee95440737b437e7f5a6fd30e9e950c16d66e8df"
+  },
+  {
+    "name": "Saitamaar-Regular.ttf",
+    "path": "fonts/ttf/Saitamaar-Regular.ttf",
+    "license": "README.md",
+    "sha256": "8f8c9b6ebe65f12456c3fa42ccddc4ec4795aad8b7f0a12f00d9f09f31a35890",
+    "repository": "asciiart-development/SaitamaarFont",
+    "revision": "695bee7a81f22d3a3602efe4845e425510d01e67",
+    "license_sha256": "8b3df700a4dd3c57e44c5678cd604a47f973ed05f6c99f92d2cd1a7df361ae55",
+    "license_name": ".LICENSE.md"
+  },
+  {
     "name": "NotoSansJP.ttf",
     "path": "ofl/notosansjp/NotoSansJP[wght].ttf",
     "license": "ofl/notosansjp/OFL.txt",
@@ -7,24 +134,6 @@
     "repository": "google/fonts",
     "revision": "2750b521bd22ce141f12617194ab0e04cf5d12d5",
     "license_sha256": "1c05c68c34f9708415aada51f17e1b0092d2cea709bf4a94cd38114f9e73d7d9"
-  },
-  {
-    "name": "PlayfairDisplay.ttf",
-    "path": "ofl/playfairdisplay/PlayfairDisplay[wght].ttf",
-    "license": "ofl/playfairdisplay/OFL.txt",
-    "sha256": "c40f2293766a503bc70cce9e512ef844a4ccb7cbcde792fe2ea31d191917d8d6",
-    "repository": "google/fonts",
-    "revision": "2750b521bd22ce141f12617194ab0e04cf5d12d5",
-    "license_sha256": "566be814f8e96e93dfa16101331557eb6b5467e9e03f627c0910fe93ca12300e"
-  },
-  {
-    "name": "NotoSerifJP.ttf",
-    "path": "ofl/notoserifjp/NotoSerifJP[wght].ttf",
-    "license": "ofl/notoserifjp/OFL.txt",
-    "sha256": "2fd527ba12b6a44ec30d796d633360da0aeba6c5d4af1304ce12bb4dc15a7dfc",
-    "repository": "google/fonts",
-    "revision": "2750b521bd22ce141f12617194ab0e04cf5d12d5",
-    "license_sha256": "5e0da210fb04058a8c0087985d2d456b931c2579811a49655721d3cf0c36b6d6"
   },
   {
     "name": "NotoColorEmoji.ttf",

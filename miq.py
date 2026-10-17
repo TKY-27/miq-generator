@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Offline quote PNG renderer with the original composition and CLI."""
+"""Offline quote PNG renderer: ten equally likely layouts and the original CLI."""
 
 from __future__ import annotations
 
 import argparse
+import io
 import os
 import random
 import re
@@ -14,33 +15,34 @@ from PIL import Image, ImageDraw, ImageFilter
 
 from miq_fonts import (
     FONT_DIR,
-    editorial_fonts,
+    bundled_fonts,
     find_emoji_font,
     find_font,
     find_italic_font,
     font_at,
 )
-from miq_images import classic_image, place_image, read_image
+from miq_images import encode_png, read_image
+from miq_layouts import ALIASES, LAYOUTS, Ctx
 from miq_text import (
     EmojiImages,
     MixedFont,
-    draw_mixed,
     fit,
-    paint,
     wrap_words,
 )
 from miq_words import units
 
-SIZE = (640, 360)
+SIZE = (960, 540)
 BASE_SIZE = (1920, 1080)
 ALIGN_CHOICES = ("center", "right")
 TEXT_LEFT = {"right": 1010, "center": 845}
 TEXT_RIGHT = 1780
 CENTER_SHIFT = 0.05
 LINE_HEIGHT = 1.43
-LAYOUT_WEIGHTS = (("classic", 50), ("mirrored", 30), ("magazine", 15), ("literary", 5))
+# Every layout is equally likely.
+LAYOUT_WEIGHTS = tuple((name, 1) for name in LAYOUTS)
 __all__ = [
     "BASE_SIZE",
+    "LAYOUTS",
     "SIZE",
     "choose_layout",
     "find_font",
@@ -49,6 +51,7 @@ __all__ = [
     "resolve_align",
     "resolve_size",
     "text_region",
+    "warmup",
     "wrap_line",
 ]
 
@@ -72,13 +75,9 @@ def resolve_size(value=None):
 
 
 def choose_layout(rng=None):
-    value = (rng or random).random() * sum(weight for _, weight in LAYOUT_WEIGHTS)
-    cumulative = 0
-    for name, weight in LAYOUT_WEIGHTS:
-        cumulative += weight
-        if value < cumulative:
-            return name
-    return LAYOUT_WEIGHTS[-1][0]
+    names = [name for name, _ in LAYOUT_WEIGHTS]
+    index = int((rng or random).random() * len(names))
+    return names[min(index, len(names) - 1)]
 
 
 def wrap_line(para, font, max_width):
@@ -133,6 +132,8 @@ def _background_layer(size: tuple[int, int]) -> Image.Image:
 
 
 def dark_background(size: tuple[int, int]) -> Image.Image:
+    """Kept for API compatibility with the original classic background."""
+
     # The glow only depends on the canvas size; callers paint over their own copy.
     return _background_layer(tuple(size)).copy()
 
@@ -178,76 +179,10 @@ def line_anchor(
     return min(max(target, low), high)
 
 
-def credit(
-    canvas, text, maker, maximum, xy, width, fill, *, center=False, baseline=False
-):
-    if not text.strip():
-        return
-    font = maker(maximum)
-    scale = min(1, width / max(1, font.width(text)))
-    x = xy[0] - font.getlength(text) * scale / 2 if center else xy[0]
-    if baseline:
-        from miq_text import paint_line
-
-        if font.complex_text(text):
-            font.complex.draw(canvas, text, (x, xy[1]), fill, scale)
-        else:
-            paint_line(canvas, font, text, (x, xy[1]), fill, scale)
-    elif scale == 1:
-        draw_mixed(ImageDraw.Draw(canvas), canvas, (x, xy[1]), text, font, fill)
-    else:
-        from miq_text import paint_line
-
-        if font.complex_text(text):
-            font.complex.draw(
-                canvas, text, (x, xy[1] + font.ascent() * scale), fill, scale
-            )
-        else:
-            paint_line(
-                canvas, font, text, (x, xy[1] + font.ascent() * scale), fill, scale
-            )
-
-
-def font_makers(images, font_file=None, bold_font_file=None, latin_override=None):
-    jp, latin, serif = editorial_fonts()
-    body = find_font(font_file or os.getenv("MIQ_FONT") or jp)
-    author = find_font(bold_font_file or serif)
-
-    def quote(px):
-        english = (
-            font_at(latin_override, px)
-            if latin_override
-            else font_at(latin, round(px * 1.12), 700)
-        )
-        return MixedFont(
-            font_at(body, px, 800),
-            images.path,
-            images=images,
-            editorial=not latin_override,
-            latin=english,
-        )
-
-    def name(px):
-        return MixedFont(font_at(author, px, 600), images.path, images=images)
-
-    def handle(px):
-        return MixedFont(font_at(_ui_font(), px), images.path, images=images)
-
-    return quote, name, handle
-
-
-@lru_cache(maxsize=1)
-def _ui_font():
-    """The handle line is optional, so its font lookup only runs when it is drawn."""
-
-    ui = "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"
-    return ui if Path(ui).is_file() else find_font(None)
-
-
 def render(
     avatar: Path,
     text: str,
-    output: Path,
+    output,
     name: str = "",
     handle: str = "",
     font_file=None,
@@ -264,19 +199,21 @@ def render(
 ):
     """Render offline. Fix layout (or seed) for reproducible output.
 
-    ``attachment=True`` keeps the source image's aspect ratio instead of cropping
-    it to a square. Text has no character-count or minimum-size limit.
+    ``output`` is a path (``.png``/``.jpg``/``.webp`` by suffix) or a binary file
+    object, which receives PNG bytes. ``attachment=True`` keeps the source image's
+    aspect ratio. Text has no character-count or minimum-size limit.
     """
     if not text.strip():
         raise ValueError("本文が空です。")
     target = resolve_size(size)
     align = resolve_align(align)
+    bundled_fonts()
     if layout == "auto":
-        editorial_fonts()
         layout = choose_layout(random.Random(seed) if seed is not None else None)
-    if layout not in dict(LAYOUT_WEIGHTS):
+    layout = ALIASES.get(layout, layout)
+    if layout not in LAYOUTS:
         raise ValueError(f"不明なレイアウト: {layout}")
-    image = read_image(avatar)
+    image = read_image(avatar, target)
     emoji_path = find_emoji_font(emoji_font_file)
     if (
         not emoji_font_file
@@ -284,154 +221,52 @@ def render(
         and (FONT_DIR / "NotoColorEmoji.ttf").is_file()
     ):
         emoji_path = str(FONT_DIR / "NotoColorEmoji.ttf")
-    images = EmojiImages(emoji_path, custom_emojis)
-    has_credit = bool(name.strip() or handle.strip())
-    if layout == "classic":
-        w, h = target
-        kx, ky = w / 1920, h / 1080
-        k = min(kx, ky)
-        latin_override = italic_font_file or os.getenv("MIQ_ITALIC_FONT")
-        if latin_override:
-            latin_override = find_italic_font(latin_override)
-        maker, name_maker, handle_maker = font_makers(
-            images, font_file, bold_font_file, latin_override
-        )
+    latin = italic_font_file or os.getenv("MIQ_ITALIC_FONT")
+    body = font_file or os.getenv("MIQ_FONT")
+    ctx = Ctx(
+        image,
+        text,
+        name,
+        handle,
+        target,
+        EmojiImages(emoji_path, custom_emojis),
+        attachment,
+        align,
+        find_font(body) if body else None,
+        find_font(bold_font_file) if bold_font_file else None,
+        find_italic_font(latin) if latin else None,
+    )
+    save(LAYOUTS[layout](ctx), output)
 
-        box = text_region(w, h, has_credit, align)
-        result = fit(
-            text,
-            maker,
-            box[2] - box[0],
-            box[3] - box[1],
-            max(9, round(76 * k)),
-            classic=True,
-        )
-        widest = max(result.font.getlength(row) * result.scale for row in result.lines)
-        cx = line_anchor(w, box[0], box[2], widest, align)
-        canvas = dark_background(target)
-        classic_image(canvas, image, attachment)
-        paint(canvas, result, box, (246, 248, 250), center=True, classic=True, cx=cx)
-        if has_credit:
-            y = round(846 * ky)
-            ImageDraw.Draw(canvas).line(
-                (cx - round(142 * kx), y, cx + round(142 * kx), y),
-                fill=(63, 125, 149),
-                width=max(1, round(2 * k)),
-            )
-            name_size = max(9, round(43 * k))
-            while (
-                name_size > 9
-                and name_maker(name_size).width("— " + name) > box[2] - box[0]
-            ):
-                name_size -= 1
-            if name.strip():
-                credit(
-                    canvas,
-                    "— " + name,
-                    name_maker,
-                    name_size,
-                    (cx, y + round(24 * ky)),
-                    box[2] - box[0],
-                    (248, 250, 252),
-                    center=True,
-                )
-            if handle.strip():
-                credit(
-                    canvas,
-                    "@" + handle.strip().lstrip("@"),
-                    handle_maker,
-                    max(8, round(30 * k)),
-                    (cx, y + round((88 if name.strip() else 45) * ky)),
-                    box[2] - box[0],
-                    (132, 160, 173),
-                    center=True,
-                )
-    else:
-        # The approved small previews were downsampled from the editorial master.
-        factor = max(1, 1920 / target[0])
-        work = (round(target[0] * factor), round(target[1] * factor))
-        canvas = editorial(
-            image,
-            text,
-            name,
-            handle,
-            work,
-            layout,
-            images,
-            attachment,
-            font_file,
-            bold_font_file,
-        )
-        if work != target:
-            canvas = canvas.resize(target, Image.Resampling.LANCZOS)
+
+def save(canvas, output):
+    if not isinstance(output, (str, os.PathLike)):
+        output.write(encode_png(canvas))
+        return
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
-    canvas.convert("RGB").save(output, format="PNG")
-
-
-def editorial(
-    image,
-    text,
-    name,
-    handle,
-    size,
-    layout,
-    images,
-    attachment,
-    font_file,
-    bold_font_file,
-):
-    w, h = size
-    kx, ky = w / 1920, h / 1080
-    k = min(kx, ky)
-
-    def box(values):
-        return tuple(
-            round(v * (kx if i % 2 == 0 else ky)) for i, v in enumerate(values)
-        )
-
-    maker, name_maker, handle_maker = font_makers(images, font_file, bold_font_file)
-
-    if layout == "mirrored":
-        background, ink, secondary = "#101010", "#f4f3ef", "#aaa9a7"
-        slot = (946, 65, 1896, 1015)
-        text_box = (112, 150, 886, 766)
-        maximum = 82
-        author = (112, 926)
-    elif layout == "magazine":
-        background, ink, secondary = "#f1f1ed", "#101010", "#626260"
-        slot = (1306, 184, 1816, 694)
-        text_box = (112, 143, 1202, 970)
-        maximum = 88
-        author = (1306, 822)
+    suffix = output.suffix.lower()
+    if suffix in (".jpg", ".jpeg"):
+        canvas.convert("RGB").save(output, "JPEG", quality=93, subsampling=0)
+    elif suffix == ".webp":
+        canvas.convert("RGB").save(output, "WEBP", quality=92, method=2)
     else:
-        background, ink, secondary = "#f1f1ed", "#101010", "#626260"
-        slot = (545, 804, 865, 984) if attachment else (710, 833, 858, 981)
-        text_box = (150, 154, 1770, 730)
-        maximum = 98
-        author = (930, 876) if attachment else (900, 889)
-    canvas = Image.new("RGBA", size, background)
-    place_image(canvas, image, box(slot), attachment)
-    region = box(text_box)
-    result = fit(text, maker, region[2] - region[0], region[3] - region[1], maximum * k)
-    paint(canvas, result, region, ink, center=layout == "literary")
-    x, y = box(author)
-    available = w - round(104 * kx) - x
-    credit(
-        canvas, name, name_maker, round(48 * k), (x, y), available, ink, baseline=True
-    )
-    if handle.strip():
-        credit(
-            canvas,
-            "@" + handle.strip().lstrip("@"),
-            handle_maker,
-            round(32 * k),
-            (x, y + round(62 * ky)),
-            available,
-            secondary,
-            baseline=True,
-        )
-    return canvas
+        output.write_bytes(encode_png(canvas))
+
+
+def warmup(size=None):
+    """Load fonts, the Japanese dictionary and per-size caches before the first
+    request (call once at bot start-up). Returns the warmed layout names."""
+
+    from miq_words import tokenizer
+
+    tokenizer()
+    avatar = io.BytesIO()
+    Image.new("RGBA", (64, 64), (90, 120, 160, 255)).save(avatar, "PNG")
+    for name in LAYOUTS:
+        avatar.seek(0)
+        render(avatar, "準備 Warm up 👍", io.BytesIO(), "名前", "name", size=size, layout=name)
+    return list(LAYOUTS)
 
 
 def main():
@@ -450,7 +285,7 @@ def main():
     parser.add_argument("--emoji-font")
     parser.add_argument("--italic-font")
     parser.add_argument(
-        "--layout", choices=["auto"] + list(dict(LAYOUT_WEIGHTS)), default="auto"
+        "--layout", choices=["auto", *LAYOUTS, *ALIASES], default="auto"
     )
     parser.add_argument("--seed", type=int)
     parser.add_argument(

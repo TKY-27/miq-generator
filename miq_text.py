@@ -6,11 +6,103 @@ import unicodedata
 from collections import OrderedDict
 from contextlib import nullcontext
 from dataclasses import dataclass
+from functools import lru_cache
 
-from PIL import Image, ImageDraw, ImageOps
+import regex
+from PIL import Image, ImageColor, ImageDraw, ImageOps
 
 from miq_fonts import coverage, font_at
-from miq_words import CUSTOM, chunks, runs, units
+from miq_images import put
+from miq_words import CUSTOM, GRAPHEME, chunks, runs, units
+
+
+# Japanese faces carry no kerning between CJK glyphs, so a run is the sum of its
+# grapheme clusters. Caching each cluster's metrics and coverage mask replaces
+# FreeType's per-call outline loading, hinting and rasterisation.
+ASCII_WORD = regex.compile(r"[A-Za-z0-9]")
+
+
+def clusterable(text):
+    return not ASCII_WORD.search(text)
+
+
+@lru_cache(maxsize=16384)
+def cluster_metrics(face, cluster, features=None):
+    return face.getlength(cluster, features=features), face.getbbox(
+        cluster, anchor="ls", features=features
+    )
+
+
+@lru_cache(maxsize=4096)
+def cluster_mask(face, cluster, features=None):
+    left, top, right, bottom = cluster_metrics(face, cluster, features)[1]
+    mask = Image.new("L", (max(1, right - left), max(1, bottom - top)))
+    ImageDraw.Draw(mask).text(
+        (-left, -top), cluster, font=face, fill=255, anchor="ls", features=features
+    )
+    return mask, left, top
+
+
+def run_metrics(face, text):
+    x = 0.0
+    left = top = math.inf
+    right = bottom = -math.inf
+    for cluster in GRAPHEME.findall(text):
+        advance, (l, t, r, b) = cluster_metrics(face, cluster)
+        if r > l and b > t:
+            left, top = min(left, x + l), min(top, t)
+            right, bottom = max(right, x + r), max(bottom, b)
+        x += advance
+    if left == math.inf:
+        return x, (0, 0, 0, 0)
+    return x, (math.floor(left), top, math.ceil(right), bottom)
+
+
+def ink(canvas, fill):
+    if isinstance(fill, int):
+        return fill
+    if isinstance(fill, str):
+        return ImageColor.getcolor(fill, canvas.mode)
+    fill = tuple(fill)
+    if canvas.mode == "RGBA" and len(fill) == 3:
+        return fill + (255,)
+    if canvas.mode == "RGB" and len(fill) == 4:
+        return fill[:3]
+    return fill
+
+
+def draw_clusters(canvas, face, text, x, baseline, fill, features=None):
+    color = ink(canvas, fill)
+    for cluster in GRAPHEME.findall(text):
+        advance = cluster_metrics(face, cluster, features)[0]
+        if not cluster.isspace():
+            mask, left, top = cluster_mask(face, cluster, features)
+            canvas.paste(color, (round(x + left), round(baseline + top)), mask)
+        x += advance
+    return x
+
+
+@lru_cache(maxsize=512)
+def unicode_emoji(font_path, token):
+    """Colour emoji come from a fixed font, so sprites are shared across requests."""
+
+    font = None
+    for size in (109, 128, 64):
+        try:
+            font = font_at(font_path, size)
+            break
+        except OSError:
+            continue
+    if font is None:
+        raise ValueError(f"絵文字フォントを読み込めません: {font_path}")
+    image = Image.new("RGBA", (320, 280))
+    ImageDraw.Draw(image).text(
+        (4, 4), token, font=font, anchor="lt", embedded_color=True
+    )
+    bbox = image.getbbox()
+    if not bbox:
+        return None
+    return ImageOps.contain(image.crop(bbox), (128, 128), Image.Resampling.LANCZOS)
 
 
 class EmojiImages:
@@ -20,7 +112,6 @@ class EmojiImages:
         self.path = font_path
         self.custom = {str(k): v for k, v in (custom or {}).items()}
         self.cache = OrderedDict()
-        self.font = None
 
     def get(self, token):
         if token in self.cache:
@@ -33,24 +124,9 @@ class EmojiImages:
             if path:
                 with Image.open(path) as source:
                     image = ImageOps.exif_transpose(source).convert("RGBA")
+                image = ImageOps.contain(image, (128, 128), Image.Resampling.LANCZOS)
         elif self.path:
-            if self.font is None:
-                for size in (109, 128, 64):
-                    try:
-                        self.font = font_at(self.path, size)
-                        break
-                    except OSError:
-                        continue
-                if self.font is None:
-                    raise ValueError(f"絵文字フォントを読み込めません: {self.path}")
-            image = Image.new("RGBA", (320, 280))
-            ImageDraw.Draw(image).text(
-                (4, 4), token, font=self.font, anchor="lt", embedded_color=True
-            )
-            bbox = image.getbbox()
-            image = image.crop(bbox) if bbox else None
-        if image is not None:
-            image = ImageOps.contain(image, (128, 128), Image.Resampling.LANCZOS)
+            image = unicode_emoji(self.path, token)
         self.cache[token] = image
         if len(self.cache) > 128:
             self.cache.popitem(last=False)
@@ -73,6 +149,7 @@ class MixedFont:
         images=None,
         editorial=False,
         latin=None,
+        weight=None,
     ):
         self.font = font
         self.px = font.size
@@ -80,9 +157,11 @@ class MixedFont:
         self.images = images or EmojiImages(emoji_font, custom_emojis)
         self.italic = latin or (font_at(italic_font, self.px) if italic_font else None)
         self.editorial = editorial
+        self.weight = weight or (800 if editorial else None)
         self._emoji_advance = self.px * (1.1 if editorial else 1.245)
         self._metrics = OrderedDict()
         self._complex = None
+        self._complex_rows = {}
 
     @property
     def has_emoji(self):
@@ -98,6 +177,14 @@ class MixedFont:
         return self.px if self.editorial else max(1, round(self.px * 1.05))
 
     def complex_text(self, text):
+        known = self._complex_rows.get(text)
+        if known is None:
+            known = self._complex_scan(text)
+            if len(self._complex_rows) < 2048:
+                self._complex_rows[text] = known
+        return known
+
+    def _complex_scan(self, text):
         for token, kind in runs(text, self.editorial):
             if kind == "emoji":
                 continue
@@ -147,7 +234,10 @@ class MixedFont:
         if text in cache:
             cache.move_to_end(text)
             return cache[text]
-        result = face.getlength(text), face.getbbox(text, anchor="ls")
+        if face is self.font and clusterable(text) and len(text) <= 1024:
+            result = run_metrics(face, text)
+        else:
+            result = face.getlength(text), face.getbbox(text, anchor="ls")
         if len(text) <= 1024:
             cache[text] = result
             if len(cache) > 128:
@@ -206,17 +296,16 @@ def draw_mixed(draw, canvas, xy, text, font, fill, *, anchor="lt"):
     if font.complex_text(text):
         font.complex.draw(canvas, text, (x, y + font.ascent()), fill)
         return
-    if not font.has_emoji and font.italic is None:
-        draw.text((x, y), text, font=font.font, fill=fill, anchor="lt")
-        return
     baseline = y + font.ascent()
     for part, face, image, advance in font.pieces(text):
-        if image is None:
+        if image is None and face is font.font and clusterable(part):
+            draw_clusters(canvas, face, part, x, baseline, fill)
+        elif image is None:
             draw.text((x, baseline), part, font=face, fill=fill, anchor="ls")
         else:
             size = font.emoji_size()
             image = ImageOps.contain(image, (size, size), Image.Resampling.LANCZOS)
-            canvas.alpha_composite(
+            put(canvas, 
                 image,
                 (
                     round(x + (size - image.width) / 2),
@@ -305,15 +394,33 @@ class TextLayout:
         ) * self.scale
 
 
-def fit(text, make_font, width, height, maximum, *, classic=False):
+def fit(
+    text,
+    make_font,
+    width,
+    height,
+    maximum,
+    *,
+    classic=False,
+    native=None,
+    balanced=None,
+    leading=1.43,
+):
+    """Largest size whose wrapped rows fit; never truncates.
+
+    ``native`` searches whole pixel sizes with real fonts (fast and crisp), and only
+    falls back to scaled sub-pixel sizes when even 8px is too large.
+    """
+    native = classic if native is None else native
+    balanced = not classic if balanced is None else balanced
     paragraphs = [units(p) for p in text.split("\n")]
     # Fixed metrics below the ordinary pixel range allow subpixel type sizes.
     reference = make_font(128)
     complex_text = reference.complex_text(text)
 
     def attempt(size):
-        native = classic and size >= 8
-        font = make_font(int(size)) if native else reference
+        whole = native and size >= 8
+        font = make_font(int(size)) if whole else reference
         scale = size / font.px
         available = width / scale
         if complex_text:
@@ -321,29 +428,33 @@ def fit(text, make_font, width, height, maximum, *, classic=False):
         else:
             rows = []
             for words in paragraphs:
-                wrapped = wrap_words(words, font, available, balanced=not classic)
+                wrapped = wrap_words(words, font, available, balanced=balanced)
                 if wrapped is None:
                     return None
                 rows.extend(wrapped)
         if any(font.width(row) > available + 0.01 for row in rows):
             return None
         bounds = [font.measure(row)[1] for row in rows]
-        leading = int(font.px * 1.43) if native else font.px * 1.43
+        line = int(font.px * leading) if whole else font.px * leading
         top = min(b[1] for b in bounds)
         bottom = max(b[3] for b in bounds)
         if classic:
             # Preserve the original line-box placement for ordinary quotes.
             top = min(top, -font.ascent())
-            bottom = max(bottom, leading - font.ascent())
-        leading = max(leading, bottom - top)
-        layout = TextLayout(font, rows, size, leading, top, bottom)
+            bottom = max(bottom, line - font.ascent())
+        line = max(line, bottom - top)
+        layout = TextLayout(font, rows, size, line, top, bottom)
         return layout if layout.height <= height + 0.01 else None
 
-    if classic:
+    if native:
         low, high = 8, max(8, int(maximum))
         best = None
+        # Probe near the area estimate first: it usually halves the search.
+        glyphs = max(1, sum(len(w) for words in paragraphs for w in words))
+        guess = int(0.92 * (width * height / (glyphs * leading)) ** 0.5)
         while low <= high:
-            mid = (low + high) // 2
+            mid = min(high, max(low, guess)) if guess else (low + high) // 2
+            guess = 0
             result = attempt(mid)
             if result is None:
                 high = mid - 1
@@ -371,27 +482,49 @@ def fit(text, make_font, width, height, maximum, *, classic=False):
     return best
 
 
-def paint(canvas, layout, box, fill, *, center=False, classic=False, cx=None):
-    """Paint in bounded strips, including sizes below a physical pixel."""
+def paint(
+    canvas,
+    layout,
+    box,
+    fill,
+    *,
+    center=False,
+    classic=False,
+    cx=None,
+    align=None,
+    valign="middle",
+):
+    """Paint in bounded strips, including sizes below a physical pixel.
+
+    ``align`` is ``left``/``center``/``right``; ``valign`` is ``top``/``middle``/
+    ``bottom``. Whole-pixel layouts draw straight onto the canvas.
+    """
     font = layout.font
     scale = layout.scale
-    baseline = box[1] + (box[3] - box[1] - layout.height) / 2 - layout.top * scale
-    if classic and scale == 1:
-        baseline = (
-            box[1] + max(0, int((box[3] - box[1] - layout.height) // 2)) + font.ascent()
-        )
-    from miq_complex import BitmapTiles
+    align = align or ("center" if center else "left")
+    spare = box[3] - box[1] - layout.height
+    spare = {"top": 0, "bottom": spare}.get(valign, spare / 2)
+    baseline = box[1] + spare - layout.top * scale
+    direct = scale == 1
+    if classic and direct:
+        baseline = box[1] + max(0, int(spare // 1)) + font.ascent()
+    if scale < 1 / 32:
+        from miq_complex import BitmapTiles
 
-    context = BitmapTiles(canvas) if scale < 1 / 32 else nullcontext(None)
+        context = BitmapTiles(canvas)
+    else:
+        context = nullcontext(None)
     with context as tiles:
         for row in layout.lines:
             advance, bounds = font.measure(row)
-            x = (
-                (cx if cx is not None else (box[0] + box[2]) / 2) - advance * scale / 2
-                if center
-                else box[0] - min(0, bounds[0]) * scale
-            )
-            if classic and scale == 1:
+            if align == "center":
+                x = (cx if cx is not None else (box[0] + box[2]) / 2) - advance * scale / 2
+            elif align == "right":
+                x = box[2] - max(advance, bounds[2]) * scale
+            else:
+                x = box[0] - min(0, bounds[0]) * scale
+            if direct:
+                x = round(x)
                 draw_mixed(
                     ImageDraw.Draw(canvas),
                     canvas,
@@ -445,7 +578,7 @@ def paint_line(canvas, font, text, xy, fill, scale, *, tiles=None):
             (max(1, round(image.width * scale)), max(1, round(image.height * scale))),
             Image.Resampling.LANCZOS,
         )
-        canvas.alpha_composite(
+        put(canvas, 
             image, (round(xy[0] - origin * scale), round(xy[1] + (top - 2) * scale))
         )
         return
