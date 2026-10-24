@@ -21,50 +21,62 @@ CASES = [
     ("じゃあ8時間ホモになるか 👩🏽‍💻 Discord 8:30", "classic", "640x360"),
     ("「大切な問い」を考えよう。次の発見につながる。", "classic", "640x360"),
     ("مرحبا Discord 123 👩🏽‍💻", "classic", "640x360"),
-    ("全文を残して小さく表示する。長い引用文でも省略せずに縮小する。" * 12, "classic", "640x360"),
+    (
+        "全文を残して小さく表示する。長い引用文でも省略せずに縮小する。" * 12,
+        "classic",
+        "640x360",
+    ),
     ("毎日が学びの機会。", "mirrored", "854x480"),
     ("毎日が学びの機会。", "magazine", "854x480"),
     ("問いを立て続けること。", "literary", "1920x1080"),
 ]
 
 
+def run(text, layout, size, output):
+    miq.render(
+        AVATAR,
+        text,
+        output,
+        "投稿者",
+        "poster",
+        layout=layout,
+        size=size,
+        font_family=miq.REGISTRY[layout].fonts[0],
+    )
+
+
 def main() -> int:
     cycles = int(sys.argv[1]) if len(sys.argv) > 1 else 3
+    every = [
+        ("毎日が学びの機会。Stay curious ✨", name, "640x360") for name in miq.LAYOUTS
+    ]
+    cases = CASES + every
     with tempfile.TemporaryDirectory() as directory:
         output = Path(directory)
-        for index, (text, layout, size) in enumerate(CASES):
+        miq.warmup()
+        for index, (text, layout, size) in enumerate(cases):
             # Warm imports, font handles and mask caches before timing.
-            miq.render(
-                AVATAR,
-                text,
-                output / f"{index}.png",
-                "投稿者",
-                "poster",
-                layout=layout,
-                size=size,
-            )
+            run(text, layout, size, output / f"{index}.png")
         samples = []
         for _ in range(cycles):
-            for index, (text, layout, size) in enumerate(CASES):
+            for index, (text, layout, size) in enumerate(cases):
                 start = time.perf_counter()
-                miq.render(
-                    AVATAR,
-                    text,
-                    output / f"{index}.png",
-                    "投稿者",
-                    "poster",
-                    layout=layout,
-                    size=size,
-                )
-                samples.append(((time.perf_counter() - start) * 1000, layout))
+                run(text, layout, size, output / f"{index}.png")
+                elapsed = (time.perf_counter() - start) * 1000
+                samples.append((elapsed, layout, index < len(CASES)))
+    print("-- representative cases (same as earlier releases)")
     for layout in ("classic", "mirrored", "magazine", "literary"):
-        group = [value for value, name in samples if name == layout]
-        if group:
-            median = statistics.median(group)
-            print(f"{layout:9} n={len(group):3d} median={median:7.1f}ms")
-    values = [value for value, _ in samples]
+        group = [v for v, name, core in samples if core and name == layout]
+        print(f"{layout:11} n={len(group):3d} median={statistics.median(group):7.1f}ms")
+    core = [v for v, _, flag in samples if flag]
+    print(f"{'all':11} n={len(core):3d} median={statistics.median(core):7.1f}ms")
+    print("-- every layout at 640x360")
+    for layout in miq.LAYOUTS:
+        group = [v for v, name, flag in samples if not flag and name == layout]
+        print(f"{layout:11} median={statistics.median(group):7.1f}ms")
+    values = [v for v, _, flag in samples if not flag]
     print(
-        f"{'all':9} n={len(values):3d} median={statistics.median(values):7.1f}ms"
+        f"{'all':11} n={len(values):3d} median={statistics.median(values):7.1f}ms"
         f" mean={statistics.mean(values):7.1f}ms"
     )
     return 0

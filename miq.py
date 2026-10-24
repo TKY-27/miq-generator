@@ -1,54 +1,58 @@
 #!/usr/bin/env python3
-"""Offline quote PNG renderer with the original composition and CLI."""
+"""Offline quote PNG renderer: 27 layouts, one typeface per image, CLI and API."""
 
 from __future__ import annotations
 
 import argparse
+import io
 import os
 import random
 import re
-from functools import lru_cache
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageOps
 
+import miq_layouts
+from miq_designs import dark_background, line_anchor, text_region
+from miq_discord import clean
 from miq_fonts import (
+    FAMILIES,
     FONT_DIR,
-    editorial_fonts,
+    custom_family,
+    family,
     find_emoji_font,
     find_font,
     find_italic_font,
     font_at,
 )
-from miq_images import classic_image, place_image, read_image
-from miq_text import (
-    EmojiImages,
-    MixedFont,
-    draw_mixed,
-    fit,
-    paint,
-    wrap_words,
-)
+from miq_layouts import REGISTRY, Scene
+from miq_text import EmojiImages, MixedFont, fit, wrap_words
 from miq_words import units
 
 SIZE = (640, 360)
 BASE_SIZE = (1920, 1080)
 ALIGN_CHOICES = ("center", "right")
-TEXT_LEFT = {"right": 1010, "center": 845}
-TEXT_RIGHT = 1780
-CENTER_SHIFT = 0.05
 LINE_HEIGHT = 1.43
-LAYOUT_WEIGHTS = (("classic", 50), ("mirrored", 30), ("magazine", 15), ("literary", 5))
+LAYOUTS = tuple(REGISTRY)
+# Every layout is equally likely (kept as pairs for the old public name).
+LAYOUT_WEIGHTS = tuple((name, 1) for name in LAYOUTS)
+PNG_COMPRESSION = 3
 __all__ = [
     "BASE_SIZE",
+    "LAYOUTS",
     "SIZE",
     "choose_layout",
+    "choose_style",
+    "compose",
+    "dark_background",
     "find_font",
     "fit_text",
     "render",
+    "render_bytes",
     "resolve_align",
     "resolve_size",
     "text_region",
+    "warmup",
     "wrap_line",
 ]
 
@@ -71,14 +75,48 @@ def resolve_size(value=None):
     return width, height
 
 
-def choose_layout(rng=None):
-    value = (rng or random).random() * sum(weight for _, weight in LAYOUT_WEIGHTS)
-    cumulative = 0
-    for name, weight in LAYOUT_WEIGHTS:
-        cumulative += weight
-        if value < cumulative:
-            return name
-    return LAYOUT_WEIGHTS[-1][0]
+def choose_layout(rng=None, category=None):
+    """Uniform draw over every layout (or one category)."""
+
+    pool = miq_layouts.names(category)
+    if not pool:
+        raise ValueError(
+            f"不明なカテゴリ: {category}（{', '.join(miq_layouts.categories())}）"
+        )
+    index = int((rng or random).random() * len(pool))
+    return pool[min(index, len(pool) - 1)]
+
+
+def installed_families(layout):
+    """The layout's typefaces that are actually on disk (best match first)."""
+
+    keys = [k for k in REGISTRY[layout].fonts if FAMILIES[k].installed()]
+    return keys or [k for k, f in FAMILIES.items() if f.installed()]
+
+
+def choose_style(
+    layout="auto", font_family="auto", *, category=None, seed=None, rng=None
+):
+    """Resolve ``auto`` choices to concrete ``(layout, font_family)`` names.
+
+    The same seed always gives the same pair, so a bot can show the user which
+    style was drawn and re-render it later.
+    """
+
+    rng = rng or (random.Random(seed) if seed is not None else random)
+    if layout in (None, "", "auto"):
+        layout = choose_layout(rng, category)
+    if layout not in REGISTRY:
+        raise ValueError(f"不明なレイアウト: {layout}")
+    if font_family in (None, "", "auto"):
+        choices = installed_families(layout)
+        if not choices:
+            raise ValueError(
+                "標準フォントがありません。python scripts/setup_fonts.py を実行してください。"
+            )
+        font_family = choices[min(int(rng.random() * len(choices)), len(choices) - 1)]
+    family(font_family)
+    return layout, font_family
 
 
 def wrap_line(para, font, max_width):
@@ -119,129 +157,111 @@ def resolve_align(value=None) -> str:
     return raw if raw in ALIGN_CHOICES else "right"
 
 
-@lru_cache(maxsize=4)
-def _background_layer(size: tuple[int, int]) -> Image.Image:
-    w, h = size
-    kx, ky = w / BASE_SIZE[0], h / BASE_SIZE[1]
-    bg = Image.new("RGB", size, (0, 1, 2))
-    # Subtle cyan glow; no numpy needed.
-    layer = Image.new("RGBA", size)
-    gd = ImageDraw.Draw(layer)
-    gd.ellipse((-320 * kx, -125 * ky, 1160 * kx, 1220 * ky), fill=(0, 70, 130, 26))
-    layer = layer.filter(ImageFilter.GaussianBlur(max(1, int(255 * min(kx, ky)))))
-    return Image.alpha_composite(bg.convert("RGBA"), layer)
+def _emoji_font(explicit):
+    path = find_emoji_font(explicit)
+    if (
+        not explicit
+        and not os.getenv("MIQ_EMOJI_FONT")
+        and (FONT_DIR / "NotoColorEmoji.ttf").is_file()
+    ):
+        path = str(FONT_DIR / "NotoColorEmoji.ttf")
+    return path
 
 
-def dark_background(size: tuple[int, int]) -> Image.Image:
-    # The glow only depends on the canvas size; callers paint over their own copy.
-    return _background_layer(tuple(size)).copy()
+def _open_image(source):
+    """A path, raw bytes, a binary stream or a PIL image → RGBA image."""
+
+    if isinstance(source, Image.Image):
+        image = source
+        if getattr(image, "is_animated", False):
+            image.seek(0)
+        return ImageOps.exif_transpose(image).convert("RGBA")
+    if isinstance(source, (bytes, bytearray, memoryview)):
+        source = io.BytesIO(bytes(source))
+    with Image.open(source) as opened:
+        return ImageOps.exif_transpose(opened).convert("RGBA")
 
 
-def text_region(width: int, height: int, has_credit: bool, align: str = "right"):
-    """本文を置ける領域 ``(left, top, right, bottom)`` を返す。
-
-    ``left`` は折り返しの左端。``center`` は上流と同じ広さを取り、``right`` は
-    アイコンの右側だけに取る（長い行でもアイコンに掛からない）。
-    """
-
-    kx, ky = width / BASE_SIZE[0], height / BASE_SIZE[1]
-    k = min(kx, ky)
-    left = round(TEXT_LEFT.get(align, TEXT_LEFT["right"]) * kx)
-    right = round(TEXT_RIGHT * kx)
-    top = round(150 * k)
-    bottom = (
-        (round(846 * ky) - round(80 * k)) if has_credit else (height - round(80 * k))
-    )
-
-    return left, top, right, bottom
-
-
-def line_anchor(
-    width: int, left: int, right: int, widest: float, align: str = "right"
-) -> float:
-    """行の中心の x を決める。
-
-    ``center`` は画面中央から少し右（``CENTER_SHIFT``）。ただしアイコン側（``left``）と
-    右端（``right``）を越えない範囲で寄せるので、長い行でもアイコンに重ならない。
-    """
-
-    if align != "center":
-        return (left + right) / 2
-
-    # 画面中央から少しだけ右へ寄せた位置を狙う
-    target = width * (0.5 + CENTER_SHIFT)
-    low, high = left + widest / 2, right - widest / 2
-
-    if low > high:
-        return (left + right) / 2
-
-    return min(max(target, low), high)
-
-
-def credit(
-    canvas, text, maker, maximum, xy, width, fill, *, center=False, baseline=False
+def compose(
+    avatar,
+    text,
+    name="",
+    handle="",
+    font_file=None,
+    bold_font_file=None,
+    size=None,
+    emoji_font_file=None,
+    italic_font_file=None,
+    custom_emojis=None,
+    align=None,
+    *,
+    layout="auto",
+    seed=None,
+    attachment=False,
+    font_family="auto",
+    category=None,
+    mentions=None,
+    markup=True,
+    date=None,
+    fast=False,
 ):
+    """Draw the quote and return ``(image, layout, font_family)``.
+
+    ``fast=True`` skips the 2× supersampling of the designed layouts: about
+    twice as fast, with slightly coarser hairlines and small print.
+    """
+
+    if markup:
+        text = clean(text, mentions)
+        name = clean(name, mentions)
     if not text.strip():
-        return
-    font = maker(maximum)
-    scale = min(1, width / max(1, font.width(text)))
-    x = xy[0] - font.getlength(text) * scale / 2 if center else xy[0]
-    if baseline:
-        from miq_text import paint_line
-
-        if font.complex_text(text):
-            font.complex.draw(canvas, text, (x, xy[1]), fill, scale)
-        else:
-            paint_line(canvas, font, text, (x, xy[1]), fill, scale)
-    elif scale == 1:
-        draw_mixed(ImageDraw.Draw(canvas), canvas, (x, xy[1]), text, font, fill)
+        raise ValueError("本文が空です。")
+    target = resolve_size(size)
+    align = resolve_align(align)
+    body_file = font_file or os.getenv("MIQ_FONT")
+    if body_file:
+        chosen = custom_family(find_font(body_file))
+        layout, _ = choose_style(layout, "gothic", category=category, seed=seed)
     else:
-        from miq_text import paint_line
-
-        if font.complex_text(text):
-            font.complex.draw(
-                canvas, text, (x, xy[1] + font.ascent() * scale), fill, scale
+        layout, key = choose_style(layout, font_family, category=category, seed=seed)
+        chosen = family(key)
+        if not chosen.installed():
+            raise ValueError(
+                f"書体 {chosen.label} がありません。python scripts/setup_fonts.py を実行してください。"
             )
+    spec = REGISTRY[layout]
+    image = _open_image(avatar)
+    images = EmojiImages(_emoji_font(emoji_font_file), custom_emojis)
+    latin = italic_font_file or os.getenv("MIQ_ITALIC_FONT")
+    latin = find_italic_font(latin) if latin else None
+    # Native layouts paint at the output size; the others draw at up to 2×
+    # (capped at 1920 wide) and downsample, which keeps small outputs crisp.
+    factor = 1 if spec.native or fast else min(2.0, max(1.0, 1920 / target[0]))
+    if factor > 1.5 and target[0] * 2 <= 1920:
+        factor = 2
+    work = (round(target[0] * factor), round(target[1] * factor))
+    scene = Scene(
+        image,
+        text,
+        name,
+        handle,
+        work,
+        chosen,
+        images,
+        attachment,
+        date,
+        name_file=find_font(bold_font_file) if bold_font_file else None,
+        latin_file=latin,
+    )
+    scene.align = align
+    canvas = spec.draw(scene)
+    if canvas.size != target:
+        if canvas.size == (target[0] * 2, target[1] * 2):
+            # Exact 2× supersampling: a box reduction is the ideal filter.
+            canvas = canvas.reduce(2)
         else:
-            paint_line(
-                canvas, font, text, (x, xy[1] + font.ascent() * scale), fill, scale
-            )
-
-
-def font_makers(images, font_file=None, bold_font_file=None, latin_override=None):
-    jp, latin, serif = editorial_fonts()
-    body = find_font(font_file or os.getenv("MIQ_FONT") or jp)
-    author = find_font(bold_font_file or serif)
-
-    def quote(px):
-        english = (
-            font_at(latin_override, px)
-            if latin_override
-            else font_at(latin, round(px * 1.12), 700)
-        )
-        return MixedFont(
-            font_at(body, px, 800),
-            images.path,
-            images=images,
-            editorial=not latin_override,
-            latin=english,
-        )
-
-    def name(px):
-        return MixedFont(font_at(author, px, 600), images.path, images=images)
-
-    def handle(px):
-        return MixedFont(font_at(_ui_font(), px), images.path, images=images)
-
-    return quote, name, handle
-
-
-@lru_cache(maxsize=1)
-def _ui_font():
-    """The handle line is optional, so its font lookup only runs when it is drawn."""
-
-    ui = "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"
-    return ui if Path(ui).is_file() else find_font(None)
+            canvas = canvas.resize(target, Image.Resampling.LANCZOS)
+    return canvas, layout, chosen.key
 
 
 def render(
@@ -257,216 +277,124 @@ def render(
     italic_font_file=None,
     custom_emojis=None,
     align=None,
-    *,
-    layout="auto",
-    seed=None,
-    attachment=False,
+    **options,
 ):
-    """Render offline. Fix layout (or seed) for reproducible output.
+    """Render offline. Fix layout and font_family (or seed) for reproducible output.
 
-    ``attachment=True`` keeps the source image's aspect ratio instead of cropping
-    it to a square. Text has no character-count or minimum-size limit.
+    ``avatar`` may be a path, bytes, a binary stream or a PIL image; ``output``
+    a path or a writable binary stream. ``attachment=True`` keeps the source
+    image's aspect ratio instead of cropping it to a square. Text has no
+    character-count or minimum-size limit.
     """
-    if not text.strip():
-        raise ValueError("本文が空です。")
-    target = resolve_size(size)
-    align = resolve_align(align)
-    if layout == "auto":
-        editorial_fonts()
-        layout = choose_layout(random.Random(seed) if seed is not None else None)
-    if layout not in dict(LAYOUT_WEIGHTS):
-        raise ValueError(f"不明なレイアウト: {layout}")
-    image = read_image(avatar)
-    emoji_path = find_emoji_font(emoji_font_file)
-    if (
-        not emoji_font_file
-        and not os.getenv("MIQ_EMOJI_FONT")
-        and (FONT_DIR / "NotoColorEmoji.ttf").is_file()
-    ):
-        emoji_path = str(FONT_DIR / "NotoColorEmoji.ttf")
-    images = EmojiImages(emoji_path, custom_emojis)
-    has_credit = bool(name.strip() or handle.strip())
-    if layout == "classic":
-        w, h = target
-        kx, ky = w / 1920, h / 1080
-        k = min(kx, ky)
-        latin_override = italic_font_file or os.getenv("MIQ_ITALIC_FONT")
-        if latin_override:
-            latin_override = find_italic_font(latin_override)
-        maker, name_maker, handle_maker = font_makers(
-            images, font_file, bold_font_file, latin_override
-        )
+    canvas, _, _ = compose(
+        avatar,
+        text,
+        name,
+        handle,
+        font_file,
+        bold_font_file,
+        size,
+        emoji_font_file,
+        italic_font_file,
+        custom_emojis,
+        align,
+        **options,
+    )
+    _save(canvas, output)
 
-        box = text_region(w, h, has_credit, align)
-        result = fit(
-            text,
-            maker,
-            box[2] - box[0],
-            box[3] - box[1],
-            max(9, round(76 * k)),
-            classic=True,
-        )
-        widest = max(result.font.getlength(row) * result.scale for row in result.lines)
-        cx = line_anchor(w, box[0], box[2], widest, align)
-        canvas = dark_background(target)
-        classic_image(canvas, image, attachment)
-        paint(canvas, result, box, (246, 248, 250), center=True, classic=True, cx=cx)
-        if has_credit:
-            y = round(846 * ky)
-            ImageDraw.Draw(canvas).line(
-                (cx - round(142 * kx), y, cx + round(142 * kx), y),
-                fill=(63, 125, 149),
-                width=max(1, round(2 * k)),
-            )
-            name_size = max(9, round(43 * k))
-            while (
-                name_size > 9
-                and name_maker(name_size).width("— " + name) > box[2] - box[0]
-            ):
-                name_size -= 1
-            if name.strip():
-                credit(
-                    canvas,
-                    "— " + name,
-                    name_maker,
-                    name_size,
-                    (cx, y + round(24 * ky)),
-                    box[2] - box[0],
-                    (248, 250, 252),
-                    center=True,
-                )
-            if handle.strip():
-                credit(
-                    canvas,
-                    "@" + handle.strip().lstrip("@"),
-                    handle_maker,
-                    max(8, round(30 * k)),
-                    (cx, y + round((88 if name.strip() else 45) * ky)),
-                    box[2] - box[0],
-                    (132, 160, 173),
-                    center=True,
-                )
-    else:
-        # The approved small previews were downsampled from the editorial master.
-        factor = max(1, 1920 / target[0])
-        work = (round(target[0] * factor), round(target[1] * factor))
-        canvas = editorial(
-            image,
-            text,
-            name,
-            handle,
-            work,
-            layout,
-            images,
-            attachment,
-            font_file,
-            bold_font_file,
-        )
-        if work != target:
-            canvas = canvas.resize(target, Image.Resampling.LANCZOS)
+
+def render_bytes(avatar, text, name="", handle="", **options):
+    """PNG bytes plus the style that was drawn: ``(png, layout, font_family)``.
+
+    Handy for Discord bots: ``discord.File(io.BytesIO(png), "quote.png")``.
+    """
+
+    canvas, layout, font_family = compose(avatar, text, name, handle, **options)
+    buffer = io.BytesIO()
+    _save(canvas, buffer)
+    return buffer.getvalue(), layout, font_family
+
+
+def _save(canvas, output):
+    image = canvas.convert("RGB")
+    if hasattr(output, "write"):
+        image.save(output, format="PNG", compress_level=PNG_COMPRESSION)
+        return
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
-    canvas.convert("RGB").save(output, format="PNG")
+    image.save(output, format="PNG", compress_level=PNG_COMPRESSION)
 
 
-def editorial(
-    image,
-    text,
-    name,
-    handle,
-    size,
-    layout,
-    images,
-    attachment,
-    font_file,
-    bold_font_file,
-):
-    w, h = size
-    kx, ky = w / 1920, h / 1080
-    k = min(kx, ky)
+def warmup():
+    """Load the dictionary, fonts and emoji face up front (call at bot start)."""
 
-    def box(values):
-        return tuple(
-            round(v * (kx if i % 2 == 0 else ky)) for i, v in enumerate(values)
-        )
+    from miq_words import tokenizer
 
-    maker, name_maker, handle_maker = font_makers(images, font_file, bold_font_file)
-
-    if layout == "mirrored":
-        background, ink, secondary = "#101010", "#f4f3ef", "#aaa9a7"
-        slot = (946, 65, 1896, 1015)
-        text_box = (112, 150, 886, 766)
-        maximum = 82
-        author = (112, 926)
-    elif layout == "magazine":
-        background, ink, secondary = "#f1f1ed", "#101010", "#626260"
-        slot = (1306, 184, 1816, 694)
-        text_box = (112, 143, 1202, 970)
-        maximum = 88
-        author = (1306, 822)
-    else:
-        background, ink, secondary = "#f1f1ed", "#101010", "#626260"
-        slot = (545, 804, 865, 984) if attachment else (710, 833, 858, 981)
-        text_box = (150, 154, 1770, 730)
-        maximum = 98
-        author = (930, 876) if attachment else (900, 889)
-    canvas = Image.new("RGBA", size, background)
-    place_image(canvas, image, box(slot), attachment)
-    region = box(text_box)
-    result = fit(text, maker, region[2] - region[0], region[3] - region[1], maximum * k)
-    paint(canvas, result, region, ink, center=layout == "literary")
-    x, y = box(author)
-    available = w - round(104 * kx) - x
-    credit(
-        canvas, name, name_maker, round(48 * k), (x, y), available, ink, baseline=True
-    )
-    if handle.strip():
-        credit(
-            canvas,
-            "@" + handle.strip().lstrip("@"),
-            handle_maker,
-            round(32 * k),
-            (x, y + round(62 * ky)),
-            available,
-            secondary,
-            baseline=True,
-        )
-    return canvas
+    tokenizer()
+    for key, item in FAMILIES.items():
+        if item.installed():
+            font_at(item.path, 64, item.body)
+    path = _emoji_font(None)
+    if path:
+        EmojiImages(path).get("😀")
 
 
 def main():
     parser = argparse.ArgumentParser(description="画像と本文から引用PNGを作成します。")
-    parser.add_argument("--avatar", "--image", dest="avatar", required=True, type=Path)
-    source = parser.add_mutually_exclusive_group(required=True)
+    parser.add_argument("--avatar", "--image", dest="avatar", type=Path)
+    source = parser.add_mutually_exclusive_group()
     source.add_argument("--text", "--quote", dest="text")
     source.add_argument("--text-file", type=Path)
     parser.add_argument("--name", default="")
     parser.add_argument("--handle", default="")
     parser.add_argument("--output", "-o", type=Path, default=Path("quote.png"))
-    parser.add_argument("--font")
-    parser.add_argument("--bold-font")
+    parser.add_argument("--font", help="全テキストに使うフォントファイル")
+    parser.add_argument("--bold-font", help="表示名だけに使うフォントファイル")
     parser.add_argument("--size")
     parser.add_argument("--align", choices=ALIGN_CHOICES)
     parser.add_argument("--emoji-font")
     parser.add_argument("--italic-font")
+    parser.add_argument("--layout", choices=["auto", *LAYOUTS], default="auto")
     parser.add_argument(
-        "--layout", choices=["auto"] + list(dict(LAYOUT_WEIGHTS)), default="auto"
+        "--category", choices=miq_layouts.categories(), help="auto抽選の系統を絞る"
+    )
+    parser.add_argument(
+        "--font-family", choices=["auto", *FAMILIES], default="auto", help="書体"
     )
     parser.add_argument("--seed", type=int)
     parser.add_argument(
         "--attachment", action="store_true", help="画像を正方形に切らず縦横比を維持する"
     )
+    parser.add_argument(
+        "--raw",
+        action="store_true",
+        help="Discord記法（**太字** や <@id>）を整形しない",
+    )
+    parser.add_argument(
+        "--fast",
+        action="store_true",
+        help="2倍描画を省いて約2倍速にする（細部はやや粗い）",
+    )
+    parser.add_argument(
+        "--list-layouts", action="store_true", help="構図と書体の一覧を表示して終了"
+    )
     args = parser.parse_args()
+    if args.list_layouts:
+        for name, spec in REGISTRY.items():
+            fonts = ", ".join(spec.fonts)
+            print(f"{name:11} {spec.category:7} {spec.label}  [{fonts}]")
+        return
+    if args.avatar is None or (args.text is None and args.text_file is None):
+        parser.error("--avatar と --text（または --text-file）が必要です。")
     try:
         text = (
             args.text_file.read_text(encoding="utf-8-sig")
             if args.text_file
             else args.text
         )
-        render(
+        canvas, layout, font_family = compose(
             args.avatar,
             text,
-            args.output,
             args.name,
             args.handle,
             args.font,
@@ -479,10 +407,15 @@ def main():
             layout=args.layout,
             seed=args.seed,
             attachment=args.attachment,
+            font_family=args.font_family,
+            category=args.category,
+            markup=not args.raw,
+            fast=args.fast,
         )
+        _save(canvas, args.output)
     except (ValueError, OSError) as exc:
         parser.exit(2, f"エラー: {exc}\n")
-    print(f"Created: {args.output}")
+    print(f"Created: {args.output} ({layout} / {font_family})")
 
 
 if __name__ == "__main__":

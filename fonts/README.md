@@ -1,7 +1,8 @@
 フォント本体はGitに含めません。`python scripts/setup_fonts.py` で取得します。
 
-全レイアウトで Noto Sans JP ExtraBold (800)、Playfair Display Bold (700)、
-Noto Serif JP SemiBold (600) を使用します。
+1枚の画像の中は1つの書体で統一し、構図ごとの候補から書体を抽選します
+（Noto Sans JP、Noto Serif JP、Zen Maru Gothic、Shippori Mincho B1、Dela Gothic One、
+DotGothic16、M PLUS 1 Code、Klee One、RocknRoll One）。
 絵文字は Noto Color Emoji を使用します。
 
 いずれも SIL Open Font License 1.1。配布元、固定リビジョン、SHA-256は

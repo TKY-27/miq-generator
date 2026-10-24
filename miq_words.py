@@ -13,8 +13,12 @@ JAPANESE = regex.compile(r"[\p{Han}\p{Hiragana}\p{Katakana}ー]+")
 KANA = regex.compile(r"[\p{Hiragana}\p{Katakana}]")
 NO_START = set(
     "、。，．：；？！゛゜ヽヾゝゞ々ー）］｝〕〉》」』】〙〗〟’”｠»・ぁぃぅぇぉっゃゅょァィゥェォッャュョ"
+    # JIS X 4051 additions: small kana, iteration marks, hyphens, ASCII closers
+    "ゎゕゖヮヵヶㇰㇱㇲㇳㇴㇵㇶㇷㇸㇹㇺㇻㇼㇽㇾㇿ〻‐゠–〜～‼⁇⁈⁉)]}!?,.:;%"
 )
-NO_END = set("（［｛〔〈《「『【〘〖〝‘“｟«")
+NO_END = set("（［｛〔〈《「『【〘〖〝‘“｟«([{")
+# Leaders and dashes are written in pairs and never split (分離禁止).
+INSEPARABLE = set("…‥—―")
 
 
 @lru_cache(maxsize=1)
@@ -31,8 +35,14 @@ def is_emoji(text):
 
 def units(text):
     """Keep words, suffixes, punctuation and extended graphemes together."""
+    return list(_units(text))
+
+
+@lru_cache(maxsize=1024)
+def _units(text):
+    """Cached: the size search re-wraps the same paragraphs many times."""
     if not text:
-        return []
+        return ()
     boundaries = {0, len(text)}
     japanese = bool(KANA.search(text))
     # Only Japanese spans go through the Japanese dictionary.
@@ -77,8 +87,10 @@ def units(text):
             continue
         if text[i] in NO_START or text[i - 1] in NO_END:
             continue
+        if text[i] in INSEPARABLE and text[i] == text[i - 1]:
+            continue
         # Attach Japanese particles after a Latin word or a number.
-        if regex.match(r"[\p{Latin}\p{N}]", text[i - 1]) and regex.match(
+        if regex.match(r"[\p{Latin}\p{N}%％]", text[i - 1]) and regex.match(
             r"\p{Hiragana}", text[i]
         ):
             continue
@@ -91,7 +103,7 @@ def units(text):
             continue
         accepted.append(i)
     accepted.append(len(text))
-    return [text[a:b] for a, b in pairwise(accepted)]
+    return tuple(text[a:b] for a, b in pairwise(accepted))
 
 
 def runs(text, editorial=False):

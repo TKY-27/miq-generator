@@ -3,6 +3,7 @@
 import os
 import shutil
 import subprocess
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
@@ -12,7 +13,7 @@ from PIL import ImageFont
 FONT_DIR = Path(__file__).resolve().parent / "fonts"
 
 
-@lru_cache(maxsize=64)
+@lru_cache(maxsize=256)
 def _font(path: str, px: int, weight):
     """Reuse FreeType handles: the binary search asks for the same sizes again."""
 
@@ -51,19 +52,54 @@ def coverage(path):
         return frozenset(font.getBestCmap() or {})
 
 
-def editorial_fonts():
-    paths = [
-        FONT_DIR / name
-        for name in ("NotoSansJP.ttf", "PlayfairDisplay.ttf", "NotoSerifJP.ttf")
-    ]
-    missing = [p.name for p in paths if not p.is_file()]
-    if missing:
-        raise ValueError(
-            "標準フォントがありません: "
-            + ", ".join(missing)
-            + "。python scripts/setup_fonts.py を実行してください。"
-        )
-    return tuple(map(str, paths))
+@dataclass(frozen=True)
+class FontFamily:
+    """One typeface used for every line of an image (weights may differ)."""
+
+    key: str
+    label: str
+    file: str
+    body: int | None = None
+    name: int | None = None
+    handle: int | None = None
+    # Relative size: display faces look larger than text faces at the same px.
+    scale: float = 1.0
+
+    @property
+    def path(self):
+        return str(FONT_DIR / self.file)
+
+    def installed(self):
+        return (FONT_DIR / self.file).is_file()
+
+
+FAMILIES = {
+    family.key: family
+    for family in (
+        FontFamily("gothic", "Noto Sans JP", "NotoSansJP.ttf", 800, 700, 500),
+        FontFamily("mincho", "Noto Serif JP", "NotoSerifJP.ttf", 800, 700, 500),
+        FontFamily("maru", "Zen Maru Gothic", "ZenMaruGothic.ttf"),
+        FontFamily("shippori", "Shippori Mincho B1", "ShipporiMinchoB1.ttf"),
+        FontFamily("dela", "Dela Gothic One", "DelaGothicOne.ttf", scale=0.94),
+        FontFamily("dot", "DotGothic16", "DotGothic16.ttf"),
+        FontFamily("code", "M PLUS 1 Code", "MPLUS1Code.ttf", 700, 600, 400),
+        FontFamily("klee", "Klee One", "KleeOne.ttf"),
+        FontFamily("rocknroll", "RocknRoll One", "RocknRollOne.ttf"),
+    )
+}
+
+
+def family(key):
+    try:
+        return FAMILIES[key]
+    except KeyError:
+        raise ValueError(f"不明な書体: {key}（{', '.join(FAMILIES)}）") from None
+
+
+def custom_family(path):
+    """A user-supplied font file, treated as a one-weight family."""
+
+    return FontFamily("custom", Path(path).stem, str(Path(path).resolve()))
 
 
 EMOJI_FONT_CHOICES = [
