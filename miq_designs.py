@@ -10,6 +10,7 @@ from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter, ImageOp
 
 import miq_effects as fx
 from miq_images import classic_image, place_image
+from miq_fonts import bundled_fonts
 from miq_layouts import fill, layout
 from miq_text import fit, paint
 
@@ -94,19 +95,38 @@ def classic(s):
     kx, ky, k = s.kx, s.ky, s.k
     align = getattr(s, "align", "right")
     box = text_region(w, h, s.has_credit, align)
-    result = fit(
-        s.text,
-        s.quote_font,
-        box[2] - box[0],
-        box[3] - box[1],
-        max(9, round(76 * k * s.family.scale)),
-        classic=True,
-    )
-    widest = max(result.font.getlength(row) * result.scale for row in result.lines)
-    cx = line_anchor(w, box[0], box[2], widest, align)
     canvas = dark_background(s.size)
     classic_image(canvas, s.image, s.attachment)
-    paint(canvas, result, box, (246, 248, 250), center=True, classic=True, cx=cx)
+    if s.aa:
+        from miq_aa import draw
+
+        draw(
+            canvas,
+            s.aa[1],
+            s.aa[0],
+            bundled_fonts(),
+            box,
+            (246, 248, 250),
+            max(9, round(76 * k * s.family.scale)),
+            align="center",
+            valign="middle",
+        )
+        cx = line_anchor(w, box[0], box[2], 0, align)
+    else:
+        result = fit(
+            s.text,
+            s.quote_font,
+            box[2] - box[0],
+            box[3] - box[1],
+            max(9, round(76 * k * s.family.scale)),
+            classic=True,
+        )
+        widest = max(
+            (result.font.getlength(row) * result.scale for row in result.lines),
+            default=0,
+        )
+        cx = line_anchor(w, box[0], box[2], widest, align)
+        paint(canvas, result, box, (246, 248, 250), center=True, classic=True, cx=cx)
     if s.has_credit:
         y = round(846 * ky)
         ImageDraw.Draw(canvas).line(
@@ -839,7 +859,9 @@ def tategaki(s):
         first = next(iter(_graphemes(s.name)), "")
         s.line(canvas, first, (290, 848), 66, paper, anchor="center", width=100)
     region = s.box((590, 110, 1800, 970))
-    if suits_vertical(s.text):
+    if s.aa:
+        s.write(canvas, (590, 140, 1780, 940), ink, 84)
+    elif suits_vertical(s.text):
         draw_vertical(canvas, s, region, ink, max_px=100 * s.k * s.family.scale)
     else:
         s.write(canvas, (590, 140, 1780, 940), ink, 84)
@@ -1043,7 +1065,7 @@ def ticket(s):
             (
                 round(s.X(x)),
                 round(s.Y(620)),
-                round(s.X(x + width)) - 1,
+                max(round(s.X(x)), round(s.X(x + width)) - 1),
                 round(s.Y(820)),
             ),
             fill=255,

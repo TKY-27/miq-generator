@@ -507,6 +507,48 @@ def test_greedy_wrap_respects_inseparable_leaders():
     assert units("100%の力") == ["100%の", "力"]
 
 
+def test_ticket_renders_at_the_minimum_size():
+    png, chosen, face = miq.render_bytes(
+        AVATAR, "短い引用", "名前", "user", size=(200, 120), layout="ticket",
+        font_family="code",
+    )
+    assert chosen == "ticket"
+    with Image.open(__import__("io").BytesIO(png)) as image:
+        assert image.size == (200, 120)
+        assert image.convert("L").getextrema()[0] != image.convert("L").getextrema()[1]
+
+
+def test_private_use_placeholder_characters_are_restored():
+    from miq_discord import clean
+
+    text = "hello \uf8f00\uf8f1 and \uf8f0 0 \uf8f1"
+    assert clean(text) == text
+    assert clean("**bold** \uf8f00\uf8f1") == "bold \uf8f00\uf8f1"
+
+
+def test_a_break_is_allowed_after_punctuation_before_latin():
+    assert units("深めよう。Stay curious.") == ["深めよう。", "Stay ", "curious."]
+    assert units("じゃあ8時間ホモになるか") == ["じゃあ", "8時間", "ホモに", "なるか"]
+
+
+def test_ascii_art_is_detected_and_rendered():
+    from miq_aa import detect
+
+    text = (ROOT / "tests" / "aa" / "mona.txt").read_text()
+    assert detect(text)[0] == "sjis"
+    tux = (ROOT / "tests" / "aa" / "tux.txt").read_text()
+    assert detect(tux)[0] == "mono"
+    for layout in ("classic", "noir", "terminal", "tategaki"):
+        png, chosen, face = miq.render_bytes(
+            AVATAR, text, "名前", "handle", size=(640, 360), layout=layout,
+            font_family=miq.REGISTRY[layout].fonts[0], markup=False,
+        )
+        assert chosen == layout
+        with Image.open(__import__("io").BytesIO(png)) as image:
+            assert image.size == (640, 360)
+            assert image.convert("L").getextrema()[0] != image.convert("L").getextrema()[1]
+
+
 def test_cli_lists_layouts():
     result = subprocess.run(
         [sys.executable, str(ROOT / "miq.py"), "--list-layouts"],

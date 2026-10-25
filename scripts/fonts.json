@@ -88,5 +88,24 @@
     "repository": "googlefonts/noto-emoji",
     "revision": "e20cbc2bbec1926686be9f9bee7d1d2cfa1fea0e",
     "license_sha256": "6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2"
+  },
+  {
+    "name": "Saitamaar-Regular.ttf",
+    "path": "fonts/ttf/Saitamaar-Regular.ttf",
+    "license": "README.md",
+    "sha256": "8f8c9b6ebe65f12456c3fa42ccddc4ec4795aad8b7f0a12f00d9f09f31a35890",
+    "repository": "asciiart-development/SaitamaarFont",
+    "revision": "695bee7a81f22d3a3602efe4845e425510d01e67",
+    "license_sha256": "8b3df700a4dd3c57e44c5678cd604a47f973ed05f6c99f92d2cd1a7df361ae55",
+    "license_name": ".LICENSE.md"
+  },
+  {
+    "name": "JetBrainsMono.ttf",
+    "path": "ofl/jetbrainsmono/JetBrainsMono[wght].ttf",
+    "license": "ofl/jetbrainsmono/OFL.txt",
+    "sha256": "48715a42ec242c21e9f02692891e147d022299a52e48d5e413e1a942193ffeda",
+    "repository": "google/fonts",
+    "revision": "2750b521bd22ce141f12617194ab0e04cf5d12d5",
+    "license_sha256": "b2fe5e8987594e9ffd1d2ca52a2f5d73eb8335243893c5d6254b5ad69269591d"
   }
 ]

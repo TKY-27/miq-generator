@@ -324,6 +324,44 @@ def wrap_words(words, font, width, balanced=False):
     return ["".join(group).rstrip() for group in groups] or [""]
 
 
+class _AAFont:
+    """Just enough of a face for layouts that measure one text width."""
+
+    def __init__(self, width, px):
+        self.width = width
+        self.px = px
+        self.size = px
+
+    def getlength(self, _text):
+        return self.width
+
+
+class AALayout:
+    """An ASCII-art block presented through the TextLayout interface."""
+
+    def __init__(self, art, fonts, box, maximum):
+        from miq_aa import _measure, layout
+
+        self.aa = art
+        self.fonts = fonts
+        self.box = box
+        self.maximum = maximum
+        px, render, path, features, leading = layout(
+            art[1], art[0], fonts, box[2] - box[0], box[3] - box[1], maximum
+        )
+        widths = [_measure(path, render, line, features) for line in art[1]]
+        self.px = px
+        self.scale = 1.0
+        self.lines = art[1]
+        self.leading = 0.0
+        self.top = 0.0
+        self.bottom = 0.0
+        self.height = len(art[1]) * px * leading
+        self.width = max(widths, default=0.0) * px / render
+        self.font = _AAFont(self.width, px)
+        self.maker = None
+
+
 @dataclass
 class TextLayout:
     font: MixedFont
@@ -436,6 +474,21 @@ def paint(
     font = layout.font
     scale = layout.scale
     align = align or ("center" if center else "left")
+    if getattr(layout, "aa", None):
+        from miq_aa import draw
+
+        draw(
+            canvas,
+            layout.aa[1],
+            layout.aa[0],
+            layout.fonts,
+            box,
+            fill,
+            layout.maximum,
+            align=align,
+            valign=valign,
+        )
+        return
     spare = box[3] - box[1] - layout.height
     spare = 0 if valign == "top" else spare if valign == "bottom" else spare / 2
     baseline = box[1] + spare - layout.top * scale

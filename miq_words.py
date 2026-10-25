@@ -17,6 +17,9 @@ NO_START = set(
     "ゎゕゖヮヵヶㇰㇱㇲㇳㇴㇵㇶㇷㇸㇹㇺㇻㇼㇽㇾㇿ〻‐゠–〜～‼⁇⁈⁉)]}!?,.:;%"
 )
 NO_END = set("（［｛〔〈《「『【〘〖〝‘“｟«([{")
+# Characters after which a line may break even without a dictionary boundary.
+# (Small kana are in NO_START but must not split じゃあ / きゅう.)
+BREAK_AFTER = set("、。，．：；？！)]}!?,.:;%»”）］｝〕〉》」』】〙〗〟’”｠")
 # Leaders and dashes are written in pairs and never split (分離禁止).
 INSEPARABLE = set("…‥—―")
 
@@ -70,6 +73,10 @@ def _units(text):
     legal = {len(text)}
     for match in GRAPHEME.finditer(text):
         legal.add(match.start())
+        # A break is allowed after punctuation that may not start a line
+        # (。 followed by Latin has no dictionary boundary of its own).
+        if match.start() and text[match.start() - 1] in BREAK_AFTER:
+            boundaries.add(match.start())
         if is_emoji(match.group()) or CUSTOM.fullmatch(match.group()):
             boundaries.update((match.start(), match.end()))
     words = iter(LATIN.finditer(text))

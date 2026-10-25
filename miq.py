@@ -18,6 +18,7 @@ from miq_discord import clean
 from miq_fonts import (
     FAMILIES,
     FONT_DIR,
+    bundled_fonts,
     custom_family,
     family,
     find_emoji_font,
@@ -212,7 +213,16 @@ def compose(
     """
 
     if markup:
-        text = clean(text, mentions)
+        # ASCII art is code-like: Discord emphasis/spoiler markers are part of
+        # the picture and must not be stripped. Detect it before cleaning.
+        try:
+            from miq_aa import detect
+
+            ascii_art = detect(text, bundled_fonts())
+        except (OSError, ValueError):
+            ascii_art = None
+        if ascii_art is None:
+            text = clean(text, mentions)
         name = clean(name, mentions)
     if not text.strip():
         raise ValueError("本文が空です。")

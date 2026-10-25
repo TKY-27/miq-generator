@@ -8,5 +8,7 @@ quote.png
 output/
 fonts/*.ttf
 fonts/*.OFL.txt
+fonts/*.LICENSE.md
+fonts/.cache/
 .pytest_cache/
 .ruff_cache/

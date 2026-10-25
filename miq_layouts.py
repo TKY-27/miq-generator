@@ -16,7 +16,7 @@ from functools import cached_property
 from PIL import Image, ImageDraw
 
 import miq_effects as fx
-from miq_fonts import FontFamily, font_at
+from miq_fonts import FontFamily, bundled_fonts, font_at
 from miq_text import MixedFont, credit, fit, paint
 from miq_words import runs
 
@@ -89,6 +89,14 @@ class Scene:
         self.classic = classic
         # Decorations depend on the quote only, so a re-render is identical.
         self.rng = random.Random(zlib.crc32(text.encode()))
+        # ASCII art is painted as one block; the normal text path is used when
+        # the AA faces are unavailable or cannot draw the text.
+        try:
+            from miq_aa import detect
+
+            self.aa = detect(text, bundled_fonts())
+        except (OSError, ValueError):
+            self.aa = None
 
     # ----- scaling -------------------------------------------------------
     def X(self, v):
@@ -150,6 +158,15 @@ class Scene:
 
     # ----- text ----------------------------------------------------------
     def fit(self, box, maximum, text=None):
+        if self.aa:
+            from miq_text import AALayout
+
+            return AALayout(
+                self.aa,
+                bundled_fonts(),
+                box,
+                maximum * self.k * self.family.scale,
+            )
         return fit(
             self.text if text is None else text,
             self.quote_font,
@@ -195,7 +212,7 @@ class Scene:
     def pictures(self, canvas, result, region, *, align="left", valign="middle"):
         """Paint only the emoji of the quote (text drawn fully transparent)."""
 
-        if self.has_pictures:
+        if self.has_pictures and not self.aa:
             paint(canvas, result, region, (0, 0, 0, 0), align=align, valign=valign)
 
     def block(self, result, region, align="left", valign="middle"):

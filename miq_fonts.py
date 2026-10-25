@@ -73,6 +73,28 @@ class FontFamily:
         return (FONT_DIR / self.file).is_file()
 
 
+# Faces that only the ASCII-art path uses (AA is not a layout typeface).
+FONT_FILES = {
+    "aa": "Saitamaar-Regular.ttf",
+    "mono": "JetBrainsMono.ttf",
+}
+
+
+@lru_cache(maxsize=1)
+def bundled_fonts():
+    """Role -> path for the faces the AA renderer needs (checked once)."""
+
+    paths = {role: FONT_DIR / name for role, name in FONT_FILES.items()}
+    missing = sorted({path.name for path in paths.values() if not path.is_file()})
+    if missing:
+        raise ValueError(
+            "標準フォントがありません: "
+            + ", ".join(missing)
+            + "。python scripts/setup_fonts.py を実行してください。"
+        )
+    return {role: str(path) for role, path in paths.items()}
+
+
 FAMILIES = {
     family.key: family
     for family in (

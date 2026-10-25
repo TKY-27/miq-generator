@@ -78,6 +78,10 @@ def clean(text, mentions=None, *, now=None, tz=None):
         protected.append(value)
         return f"\uf8f0{len(protected) - 1}\uf8f1"
 
+    # The placeholder alphabet is private-use, but users can still type it.
+    # Protect the sentinels themselves first so they are restored, not read.
+    text = regex.sub(r"[\uf8f0\uf8f1]", lambda m: keep(m[0]), text)
+
     # Code keeps its characters verbatim (only the fences go).
     text = CODE_BLOCK.sub(lambda m: keep(m[1].strip("\n")), text)
     text = INLINE_CODE.sub(lambda m: keep(m[1]), text)
@@ -118,6 +122,10 @@ def clean(text, mentions=None, *, now=None, tz=None):
         while previous != text:
             previous = text
             text = pattern.sub(r"\1", text)
-    text = regex.sub(r"\uf8f0(\d+)\uf8f1", lambda m: protected[int(m[1])], text)
+    text = regex.sub(
+        r"\uf8f0(\d+)\uf8f1",
+        lambda m: protected[int(m[1])] if int(m[1]) < len(protected) else m[0],
+        text,
+    )
     # Discord collapses nothing, but trailing blank lines only waste space.
     return text.strip("\n")
