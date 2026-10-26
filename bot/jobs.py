@@ -57,6 +57,9 @@ def picture(part):
         pictures.append(spoiler(image) if hidden else image)
     if pictures:
         return collage(pictures), True
+    if not part.avatar:
+        # The avatar download failed: a plain tile keeps the quote renderable.
+        return Image.new("RGBA", (256, 256), (88, 101, 242, 255)), False
     return part.avatar, False
 
 

@@ -200,6 +200,11 @@ def test_render_job_quote_with_media_and_layout_number():
         assert image.size == miq.default_size("portrait")
 
 
+def test_render_job_survives_a_missing_avatar():
+    png, caption = jobs.render(jobs.Request([jobs.Part(b"", "本文", "名前", "u")], seed=4))
+    assert png.startswith(b"\x89PNG") and caption.startswith("#")
+
+
 def test_render_job_dialogue():
     a = jobs.Part(AVATAR.read_bytes(), "先に言った", "B", "b", [], T0)
     b = jobs.Part(AVATAR.read_bytes(), "返信した\n続き", "A", "a", [], T0)
