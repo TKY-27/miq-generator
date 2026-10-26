@@ -47,9 +47,8 @@ def run(text, layout, size, output):
 
 def main() -> int:
     cycles = int(sys.argv[1]) if len(sys.argv) > 1 else 3
-    every = [
-        ("毎日が学びの機会。Stay curious ✨", name, "640x360") for name in miq.LAYOUTS
-    ]
+    # Each layout at its orientation's default size (landscape 640x360).
+    every = [("毎日が学びの機会。Stay curious ✨", name, None) for name in miq.LAYOUTS]
     cases = CASES + every
     with tempfile.TemporaryDirectory() as directory:
         output = Path(directory)
@@ -70,10 +69,19 @@ def main() -> int:
         print(f"{layout:11} n={len(group):3d} median={statistics.median(group):7.1f}ms")
     core = [v for v, _, flag in samples if flag]
     print(f"{'all':11} n={len(core):3d} median={statistics.median(core):7.1f}ms")
-    print("-- every layout at 640x360")
+    print("-- every layout at its default size")
     for layout in miq.LAYOUTS:
         group = [v for v, name, flag in samples if not flag and name == layout]
-        print(f"{layout:11} median={statistics.median(group):7.1f}ms")
+        orientation = miq.REGISTRY[layout].orientation
+        print(f"{layout:13} {orientation:9} median={statistics.median(group):7.1f}ms")
+    landscape = [
+        v
+        for v, name, flag in samples
+        if not flag and miq.REGISTRY[name].orientation == "landscape"
+    ]
+    print(
+        f"{'landscape':11} n={len(landscape):3d} median={statistics.median(landscape):7.1f}ms"
+    )
     values = [v for v, _, flag in samples if not flag]
     print(
         f"{'all':11} n={len(values):3d} median={statistics.median(values):7.1f}ms"

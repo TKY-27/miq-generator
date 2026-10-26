@@ -12,7 +12,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -47,7 +47,8 @@ def main() -> int:
             args.text,
             args.name,
             args.handle,
-            size=args.size,
+            # --size is for landscape; portrait/square use their default sizes.
+            size=args.size if spec.orientation == "landscape" else None,
             layout=name,
             font_family=font_family,
             date=date,
@@ -70,10 +71,10 @@ def main() -> int:
         draw.text(
             (x + 12, y + 8), f"{name} / {title} · {face}", font=font, fill=(40, 40, 40)
         )
-        sheet.paste(
-            canvas.convert("RGB").resize((tw, th), Image.Resampling.LANCZOS),
-            (x, y + label),
+        thumb = ImageOps.contain(
+            canvas.convert("RGB"), (tw, th), Image.Resampling.LANCZOS
         )
+        sheet.paste(thumb, (x + (tw - thumb.width) // 2, y + label))
     sheet_path = args.sheet or args.output / "sheet.png"
     sheet.save(sheet_path)
     print(f"sheet: {sheet_path}")

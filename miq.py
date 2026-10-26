@@ -19,6 +19,7 @@ from miq_fonts import (
     FAMILIES,
     FONT_DIR,
     bundled_fonts,
+    coverage,
     custom_family,
     family,
     find_emoji_font,
@@ -407,8 +408,14 @@ def _save(canvas, output):
     output.write_bytes(png)
 
 
-def warmup():
-    """Load the dictionary, fonts and emoji face up front (call at bot start)."""
+def warmup(full=True):
+    """Load everything a first request would otherwise wait for (call at bot start).
+
+    Besides the dictionary, fonts and emoji face, ``full`` draws one small
+    quote with every layout: that imports the Pango/Cairo bindings (about a
+    second of cffi parsing), reads each typeface's character map and fills the
+    mask caches, so even the first real request runs at full speed.
+    """
 
     from miq_words import tokenizer
 
@@ -419,6 +426,20 @@ def warmup():
     path = _emoji_font(None)
     if path:
         EmojiImages(path).get("😀")
+    if not full:
+        return
+    import miq_complex  # noqa: F401
+    import miq_vertical  # noqa: F401
+
+    for item in FAMILIES.values():
+        if item.installed():
+            coverage(str(item.path))
+    sample = Image.new("RGBA", (64, 64), (90, 120, 160, 255))
+    for name in REGISTRY:
+        try:
+            compose(sample, "あA😀", "n", "h", layout=name, seed=0, fast=True)
+        except (OSError, ValueError):
+            pass
 
 
 def main():

@@ -504,3 +504,47 @@ def classic_image(canvas, image, attachment=False):
         )
     )
     canvas.alpha_composite(layer)
+
+
+def collage(images, size=1024, gap=12, background=(16, 16, 18, 255)):
+    """Up to four pictures in one frame (one message with several attachments).
+
+    One picture is returned as is; two sit side by side (or stacked when they
+    are wide), three use one large and two small cells, four a 2x2 grid.
+    """
+
+    images = [image.convert("RGBA") for image in images[:4]]
+    if not images:
+        raise ValueError("画像がありません。")
+    if len(images) == 1:
+        return images[0]
+    wide = sum(i.width / i.height for i in images) / len(images) > 1.3
+    if len(images) == 2:
+        cells = (
+            [(0, 0, size, size // 2), (0, size // 2, size, size)]
+            if wide
+            else [(0, 0, size // 2, size), (size // 2, 0, size, size)]
+        )
+    elif len(images) == 3:
+        half = size // 2
+        cells = [(0, 0, half, size), (half, 0, size, half), (half, half, size, size)]
+    else:
+        half = size // 2
+        cells = [(x, y, x + half, y + half) for y in (0, half) for x in (0, half)]
+    canvas = Image.new("RGBA", (size, size), background)
+    for image, (l, t, r, b) in zip(images, cells):
+        l, t = l + (gap // 2 if l else 0), t + (gap // 2 if t else 0)
+        r, b = r - (gap // 2 if r < size else 0), b - (gap // 2 if b < size else 0)
+        canvas.alpha_composite(cover(image, (r - l, b - t)), (l, t))
+    return canvas
+
+
+def spoiler(image):
+    """Hide a spoiler picture: heavy blur and a dark veil, like Discord."""
+
+    small = image.convert("RGBA").resize(
+        (max(1, image.width // 16), max(1, image.height // 16)), Image.Resampling.BOX
+    )
+    blurred = small.resize(image.size, Image.Resampling.BICUBIC)
+    veil = Image.new("RGBA", image.size, (0, 0, 0, 110))
+    return Image.alpha_composite(blurred, veil)

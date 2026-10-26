@@ -42,6 +42,8 @@ class Speaker:
     handle: str = ""
     attachment: bool = False
     custom_emojis: dict = field(default_factory=dict)
+    # When the message was sent (shown by ``talk``); defaults to ``date``.
+    date: datetime | None = None
 
 
 def _choose_family(mood, font_family, rng):
@@ -126,7 +128,7 @@ def compose_dialogue(
             chosen,
             images,
             speaker.attachment,
-            date or datetime.now(),
+            speaker.date or date or datetime.now(),
             design=design,
             seed=seed,
         )
