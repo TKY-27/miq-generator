@@ -14,9 +14,20 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import miq  # noqa: E402
+import miq_catalog  # noqa: E402
 from bot import gather, jobs  # noqa: E402
+from bot.example_bot import (  # noqa: E402
+    MAX_CONCURRENT_DOWNLOADS,
+    MAX_MEDIA,
+    MAX_MEDIA_BYTES,
+    Downloads,
+    MediaBudget,
+    media_of,
+)
 from bot.commands import MAX_COUNT, Command, parse  # noqa: E402
+from miq_dialogue import Speaker, compose_dialogue  # noqa: E402
 from miq_images import collage  # noqa: E402
+from miq_fonts import FontFamily  # noqa: E402
 
 AVATAR = ROOT / "demo-avatar.png"
 T0 = datetime(2026, 10, 26, 12, 0, tzinfo=timezone.utc)
@@ -212,3 +223,114 @@ def test_render_job_dialogue():
     assert caption.startswith("対戦")
     with Image.open(io.BytesIO(png)) as image:
         assert image.size == miq.default_size("portrait")
+
+
+async def _media_groups(messages, downloads, budget):
+    return await asyncio.gather(*(media_of(m, downloads, budget) for m in messages))
+
+
+def test_media_budget_limits_count_bytes_and_parallel_downloads():
+    class FakeDownloads:
+        active = 0
+        peak = 0
+        calls = 0
+
+        async def get(self, url):
+            self.active += 1
+            self.peak = max(self.peak, self.active)
+            self.calls += 1
+            await asyncio.sleep(0)
+            self.active -= 1
+            return b"x" * (7 * 1024 * 1024)
+
+    def attachment(i):
+        return SimpleNamespace(
+            url=f"https://cdn.discordapp.com/attachments/{i}",
+            size=7 * 1024 * 1024,
+            content_type="image/png",
+            is_spoiler=lambda: False,
+        )
+
+    messages = [
+        SimpleNamespace(attachments=[attachment(i)], stickers=[], embeds=[])
+        for i in range(10)
+    ]
+    downloads, budget = FakeDownloads(), MediaBudget()
+    results = run(_media_groups(messages, downloads, budget))
+    assert downloads.calls == MAX_MEDIA
+    assert downloads.peak <= MAX_CONCURRENT_DOWNLOADS
+    assert sum(len(data) for group in results for data, _ in group) <= MAX_MEDIA_BYTES
+    assert sum(map(len, results)) == 3
+
+
+def test_download_rejects_untrusted_hosts_redirects_and_oversize_stream():
+    class Response:
+        def __init__(self, status, chunks):
+            self.status = status
+            self.content_length = None
+            self.content = self
+            self.chunks = chunks
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            pass
+
+        def raise_for_status(self):
+            pass
+
+        async def iter_chunked(self, _size):
+            for chunk in self.chunks:
+                yield chunk
+
+    class Session:
+        def __init__(self, response):
+            self.response = response
+            self.calls = []
+
+        def get(self, url, **options):
+            self.calls.append((url, options))
+            return self.response
+
+    downloads = Downloads()
+    downloads.session = Session(Response(200, [b"ok"]))
+    assert run(downloads.get("https://127.0.0.1/private")) is None
+    assert run(downloads.get("https://cdn.discordapp.com.evil.test/img")) is None
+    assert downloads.session.calls == []
+    assert run(downloads.get("https://cdn.discordapp.com/img")) == b"ok"
+    assert downloads.session.calls[0][1]["allow_redirects"] is False
+
+    downloads.session = Session(Response(302, [b"redirect"]))
+    assert run(downloads.get("https://cdn.discordapp.com/redirect")) is None
+    downloads.session = Session(Response(200, [b"x" * (12 * 1024 * 1024), b"y"]))
+    assert run(downloads.get("https://cdn.discordapp.com/large")) is None
+
+
+def test_picture_skips_image_with_too_many_pixels():
+    large = png_bytes((4000, 3100), "red")
+    part = jobs.Part(b"", "text", "name", "handle", [(large, False)])
+    image, attachment = jobs.picture(part)
+    assert image.size == (256, 256)
+    assert not attachment
+
+
+def test_square_dialogue_is_rejected():
+    speaker = Speaker(AVATAR, "本文")
+    with pytest.raises(ValueError, match="横か縦"):
+        compose_dialogue(speaker, speaker, orientation="square")
+
+
+def test_catalog_renders_when_layouts_first_font_is_unavailable(monkeypatch):
+    original_installed = FontFamily.installed
+    monkeypatch.setattr(
+        FontFamily,
+        "installed",
+        lambda self: self.key != "gothic" and original_installed(self),
+    )
+    monkeypatch.setattr(
+        miq_catalog.miq, "REGISTRY", {"classic": miq.REGISTRY["classic"]}
+    )
+    assert miq_catalog._font(20)
+    tiles = miq_catalog.thumbnails("landscape")
+    assert len(tiles) == 1 and tiles[0][2].size == miq.default_size()

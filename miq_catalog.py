@@ -31,7 +31,9 @@ HELP = "miq12 のように番号で構図を指定 ／ miqmiq…（繰り返し�
 
 
 def _font(px, bold=False):
-    item = FAMILIES["gothic"]
+    item = next((face for face in FAMILIES.values() if face.installed()), None)
+    if item is None:
+        raise ValueError("標準フォントがありません。python scripts/setup_fonts.py を実行してください。")
     return font_at(item.path, px, item.name if bold else item.handle)
 
 
@@ -50,7 +52,6 @@ def thumbnails(orientation):
             "高橋 直人",
             "naoto_notes",
             layout=spec.name,
-            font_family=spec.fonts[0],
             date=DATE,
             seed=1,
         )

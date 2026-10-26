@@ -33,6 +33,7 @@ from collections import OrderedDict
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import replace
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import aiohttp
 import discord
@@ -61,7 +62,40 @@ NEXT_ORIENTATION = {
 }
 COOLDOWN = float(os.getenv("MIQ_COOLDOWN", "5"))
 MAX_DOWNLOAD = 12 * 1024 * 1024
+MAX_MEDIA = 4
+MAX_MEDIA_BYTES = 24 * 1024 * 1024
+MAX_EMOJIS = 16
+MAX_CONCURRENT_DOWNLOADS = 3
+ALLOWED_MEDIA_HOSTS = {
+    "cdn.discordapp.com",
+    "media.discordapp.net",
+    "images-ext-1.discordapp.net",
+    "images-ext-2.discordapp.net",
+}
 URL = re.compile(r"https?://\S+")
+
+
+class MediaBudget:
+    """Limits shared by every message in one quote request."""
+
+    def __init__(self):
+        self.count = 0
+        self.bytes = 0
+        self.semaphore = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
+
+    async def get(self, downloads, url, size=None, *, media=True):
+        if (media and self.count >= MAX_MEDIA) or (
+            size is not None and size > MAX_DOWNLOAD
+        ):
+            return None
+        if media:
+            self.count += 1
+        async with self.semaphore:
+            data = await downloads.get(url)
+            if not data or self.bytes + len(data) > MAX_MEDIA_BYTES:
+                return None
+            self.bytes += len(data)
+            return data
 
 
 class Downloads:
@@ -73,12 +107,12 @@ class Downloads:
         self.size = 0
         self.session: aiohttp.ClientSession | None = None
 
-    async def get(self, url: str, read=None) -> bytes | None:
+    async def get(self, url: str) -> bytes | None:
         if url in self.items:
             self.items.move_to_end(url)
             return self.items[url]
         try:
-            data = await read() if read else await self._fetch(url)
+            data = await self._fetch(url)
         except (
             discord.HTTPException,
             aiohttp.ClientError,
@@ -96,40 +130,58 @@ class Downloads:
         return data
 
     async def _fetch(self, url):
+        parsed = urlsplit(url)
+        if (
+            parsed.scheme != "https"
+            or parsed.hostname not in ALLOWED_MEDIA_HOSTS
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.port not in (None, 443)
+        ):
+            raise ValueError("unexpected media URL")
         if self.session is None:
             self.session = aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=10)
             )
-        async with self.session.get(url) as response:
+        async with self.session.get(url, allow_redirects=False) as response:
+            if 300 <= response.status < 400:
+                raise ValueError("redirected media URL")
             response.raise_for_status()
             if (response.content_length or 0) > MAX_DOWNLOAD:
                 raise ValueError("too large")
-            return await response.read()
+            data = bytearray()
+            async for chunk in response.content.iter_chunked(64 * 1024):
+                if len(data) + len(chunk) > MAX_DOWNLOAD:
+                    raise ValueError("too large")
+                data.extend(chunk)
+            return bytes(data)
 
 
 def avatar_asset(user: discord.abc.User):
     return user.display_avatar.replace(size=512, static_format="png")
 
 
-async def media_of(message: discord.Message, downloads: Downloads):
+async def media_of(message: discord.Message, downloads: Downloads, budget: MediaBudget):
     """``[(bytes, spoiler)]`` for attachments, stickers and image/GIF embeds."""
 
     pending = []
     for a in message.attachments:
         if (a.content_type or "").split(";")[0] in IMAGE_TYPES:
-            pending.append((downloads.get(a.url, a.read), a.is_spoiler()))
+            pending.append((a.url, a.size, a.is_spoiler()))
     for sticker in message.stickers:
         if sticker.format is not discord.StickerFormatType.lottie:
-            pending.append((downloads.get(sticker.url, sticker.read), False))
+            pending.append((sticker.url, None, False))
     for embed in message.embeds:
         if embed.type in ("gifv", "image"):
             url = (embed.thumbnail and embed.thumbnail.url) or (
                 embed.image and embed.image.url
             )
             if url:
-                pending.append((downloads.get(url), False))
-    results = await asyncio.gather(*(job for job, _ in pending))
-    return [(data, hidden) for data, (_, hidden) in zip(results, pending) if data]
+                pending.append((url, None, False))
+    results = await asyncio.gather(
+        *(budget.get(downloads, url, size) for url, size, _ in pending)
+    )
+    return [(data, hidden) for data, (*_, hidden) in zip(results, pending) if data]
 
 
 def text_of(message: discord.Message) -> str:
@@ -144,17 +196,19 @@ def text_of(message: discord.Message) -> str:
     return text.strip()
 
 
-async def emojis_of(messages, downloads: Downloads):
+async def emojis_of(messages, downloads: Downloads, budget: MediaBudget):
     found = {}
     for message in messages:
         for match in CUSTOM.finditer(message.content):
+            if match[2] not in found and len(found) >= MAX_EMOJIS:
+                break
             found[match[2]] = (match[1], match[0].startswith("<a:"), message)
 
     async def one(emoji_id, name, animated, message):
         emoji = discord.PartialEmoji.with_state(
             message._state, name=name, id=int(emoji_id), animated=animated
         )
-        return emoji_id, await downloads.get(emoji.url, emoji.read)
+        return emoji_id, await budget.get(downloads, emoji.url, media=False)
 
     pairs = await asyncio.gather(*(one(i, *rest) for i, rest in found.items()))
     return {emoji_id: data for emoji_id, data in pairs if data}
@@ -169,14 +223,14 @@ def mentions_of(messages):
     return names
 
 
-async def part_of(messages, downloads: Downloads) -> jobs.Part:
+async def part_of(messages, downloads: Downloads, budget: MediaBudget) -> jobs.Part:
     """Merge one person's messages (oldest first) into one quote part."""
 
     author = messages[-1].author
     asset = avatar_asset(author)
     avatar, *media = await asyncio.gather(
-        downloads.get(asset.url, asset.read),
-        *(media_of(m, downloads) for m in messages),
+        budget.get(downloads, asset.url, media=False),
+        *(media_of(m, downloads, budget) for m in messages),
     )
     text = "\n".join(t for t in (text_of(m) for m in messages) if t)
     return jobs.Part(
@@ -191,9 +245,10 @@ async def part_of(messages, downloads: Downloads) -> jobs.Part:
 
 async def build(groups, command: Command, downloads: Downloads) -> jobs.Request:
     everything = [m for group in groups for m in group]
+    budget = MediaBudget()
     parts, emojis = await asyncio.gather(
-        asyncio.gather(*(part_of(group, downloads) for group in groups)),
-        emojis_of(everything, downloads),
+        asyncio.gather(*(part_of(group, downloads, budget) for group in groups)),
+        emojis_of(everything, downloads, budget),
     )
     return jobs.Request(
         list(parts),
@@ -317,6 +372,12 @@ class QuoteBot(discord.Client):
             last = max(spec.number for spec in miq.REGISTRY.values())
             await message.reply(
                 f"構図 {command.layout} 番はありません（1〜{last}、`miq台帳` で一覧）。",
+                mention_author=False,
+            )
+            return
+        if command.mood and command.orientation == "square":
+            await message.reply(
+                "掛け合いは横か縦だけに対応しています。",
                 mention_author=False,
             )
             return

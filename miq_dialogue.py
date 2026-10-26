@@ -78,8 +78,7 @@ def compose_dialogue(
 ):
     """Draw the exchange and return ``(image, mood, font_family)``.
 
-    ``orientation`` is ``landscape`` (default) or ``portrait``; a square
-    request uses the landscape design.
+    ``orientation`` is ``landscape`` (default) or ``portrait``.
     """
 
     if mood not in MOODS:
@@ -96,6 +95,8 @@ def compose_dialogue(
         orientation = (
             orientation_of(miq.resolve_size(size)) if explicit else "landscape"
         )
+    if orientation not in ("landscape", "portrait"):
+        raise ValueError("掛け合いは横か縦だけに対応しています。")
     portrait = orientation == "portrait"
     design = DESIGNS["portrait" if portrait else "landscape"]
     target = (

@@ -16,6 +16,8 @@ import miq
 from miq_fonts import FAMILIES
 from miq_images import collage, spoiler
 
+MAX_PIXELS = 12_000_000
+
 
 @dataclass
 class Part:
@@ -49,6 +51,8 @@ def picture(part):
     for data, hidden in part.media:
         try:
             with Image.open(io.BytesIO(data)) as opened:
+                if opened.width * opened.height > MAX_PIXELS:
+                    continue
                 if getattr(opened, "is_animated", False):
                     opened.seek(0)  # GIF / APNG / animated WebP: first frame
                 image = opened.convert("RGBA")
