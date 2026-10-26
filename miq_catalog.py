@@ -1,8 +1,8 @@
 """Numbered contact sheets of every layout (the ``miq台帳`` reply).
 
-    from miq_catalog import pages
-    for title, png in pages():
-        ...
+from miq_catalog import pages
+for title, png in pages():
+    ...
 """
 
 from __future__ import annotations
@@ -22,7 +22,11 @@ SAMPLE = "小さな発見が、明日の景色を変えていく。Stay curious 
 DATE = datetime(2026, 4, 1, 9, 41)
 PAPER, INK, SUB = (238, 236, 231), (32, 32, 36), (110, 108, 104)
 # Thumbnail cell (image area) per orientation, and columns per row.
-CELLS = {"landscape": ((320, 180), 5), "portrait": ((180, 320), 6), "square": ((240, 240), 6)}
+CELLS = {
+    "landscape": ((320, 180), 5),
+    "portrait": ((180, 320), 6),
+    "square": ((240, 240), 6),
+}
 HELP = "miq12 のように番号で構図を指定 ／ miqmiq…（繰り返し）は件数、数字は構図"
 
 
@@ -80,7 +84,9 @@ def sheet(sections, title):
         for i, (number, text, image) in enumerate(tiles):
             x = pad + (i % columns) * (cw + pad)
             top = y + (i // columns) * (ch + label + pad)
-            thumb = ImageOps.contain(image.convert("RGB"), (cw, ch), Image.Resampling.LANCZOS)
+            thumb = ImageOps.contain(
+                image.convert("RGB"), (cw, ch), Image.Resampling.LANCZOS
+            )
             page.paste(thumb, (x + (cw - thumb.width) // 2, top))
             draw.text((x, top + ch + 4), number, font=_font(20, True), fill=INK)
             offset = draw.textlength(number + " ", font=_font(20, True))
@@ -95,7 +101,10 @@ def pages():
     result = [
         (
             "miq-layouts-1.png",
-            sheet([("横（16:9）", "landscape", thumbnails("landscape"))], "miq 構図台帳 1/2"),
+            sheet(
+                [("横（16:9）", "landscape", thumbnails("landscape"))],
+                "miq 構図台帳 1/2",
+            ),
         )
     ]
     sections = [
@@ -105,7 +114,9 @@ def pages():
     try:
         from miq_dialogue import thumbnails as dialogue_thumbnails
 
-        sections.append(("掛け合い miq vs / love / talk", "landscape", dialogue_thumbnails()))
+        sections.append(
+            ("掛け合い miq vs / love / talk", "landscape", dialogue_thumbnails())
+        )
     except ImportError:
         pass
     result.append(("miq-layouts-2.png", sheet(sections, "miq 構図台帳 2/2")))

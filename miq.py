@@ -102,7 +102,9 @@ def find_layout(value):
     if isinstance(value, int) and not isinstance(value, bool):
         spec = miq_layouts.by_number(value)
         if spec is None:
-            raise ValueError(f"構図番号 {value} はありません（miq.py --list-layouts で一覧）。")
+            raise ValueError(
+                f"構図番号 {value} はありません（miq.py --list-layouts で一覧）。"
+            )
         return spec.name
     if value not in REGISTRY:
         raise ValueError(f"不明なレイアウト: {value}")

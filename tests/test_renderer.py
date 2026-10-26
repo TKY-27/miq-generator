@@ -599,3 +599,43 @@ def test_orientation_draws_and_default_sizes():
     assert layout == "classic"
     with Image.open(io.BytesIO(png)) as image:
         assert image.size == (640, 360)
+
+
+@pytest.mark.parametrize("mood", ["vs", "love", "talk"])
+@pytest.mark.parametrize("orientation", ["landscape", "portrait"])
+def test_dialogue_moods_render_both_orientations(mood, orientation):
+    from miq_dialogue import Speaker, render_dialogue_bytes
+
+    left = Speaker(AVATAR, "先に言った方 👩🏽‍💻 <:wave:123>", "あおい", "aoi")
+    right = Speaker(AVATAR, "返信した方\n二行目" * 3, "", "naoto", attachment=True)
+    png, drawn, face = render_dialogue_bytes(
+        left,
+        right,
+        mood,
+        orientation=orientation,
+        seed=3,
+        mentions={},
+        custom_emojis={"123": AVATAR},
+    )
+    assert drawn == mood and face in miq.FAMILIES
+    with Image.open(io.BytesIO(png)) as image:
+        assert image.size == miq.default_size(orientation)
+
+
+def test_dialogue_rejects_empty_and_unknown():
+    from miq_dialogue import Speaker, compose_dialogue
+
+    with pytest.raises(ValueError):
+        compose_dialogue(Speaker(AVATAR, "a"), Speaker(AVATAR, "  "), "vs")
+    with pytest.raises(ValueError):
+        compose_dialogue(Speaker(AVATAR, "a"), Speaker(AVATAR, "b"), "hate")
+
+
+def test_catalog_pages_number_every_layout():
+    from miq_catalog import pages
+
+    result = pages()
+    assert [name for name, _ in result] == ["miq-layouts-1.png", "miq-layouts-2.png"]
+    for _, png in result:
+        with Image.open(io.BytesIO(png)) as image:
+            assert image.width >= 900 and image.height > 300

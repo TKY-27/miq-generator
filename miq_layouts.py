@@ -51,7 +51,9 @@ class Layout:
 REGISTRY: dict[str, Layout] = {}
 
 
-def layout(name, label, category, fonts, *, number, native=False, orientation="landscape"):
+def layout(
+    name, label, category, fonts, *, number, native=False, orientation="landscape"
+):
     if orientation not in DESIGNS:
         raise ValueError(f"不明な向き: {orientation}")
 

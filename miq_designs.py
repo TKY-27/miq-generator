@@ -203,7 +203,9 @@ def mirrored(s):
     )
 
 
-@layout("magazine", "誌面", "classic", ("gothic", "mincho", "shippori", "dela"), number=3)
+@layout(
+    "magazine", "誌面", "classic", ("gothic", "mincho", "shippori", "dela"), number=3
+)
 def magazine(s):
     return _editorial(
         s,
@@ -218,7 +220,9 @@ def magazine(s):
     )
 
 
-@layout("literary", "文芸", "classic", ("mincho", "shippori", "gothic", "klee"), number=4)
+@layout(
+    "literary", "文芸", "classic", ("mincho", "shippori", "gothic", "klee"), number=4
+)
 def literary(s):
     slot = (545, 804, 865, 984) if s.attachment else (710, 833, 858, 981)
     author = (930, 876) if s.attachment else (900, 889)
@@ -324,7 +328,9 @@ def cinema(s):
     return canvas
 
 
-@layout("neon", "ネオン", "cool", ("gothic", "maru", "rocknroll", "dela", "code"), number=7)
+@layout(
+    "neon", "ネオン", "cool", ("gothic", "maru", "rocknroll", "dela", "code"), number=7
+)
 def neon(s):
     canvas = fx.radial(s.size, (34, 12, 54), (5, 4, 10), center=(0.75, 0.5), radius=0.6)
     cx, cy, r = 1460, 520, 250
@@ -602,7 +608,13 @@ DUOTONES = (
 )
 
 
-@layout("duotone", "デュオトーン", "cool", ("dela", "gothic", "mincho", "shippori"), number=12)
+@layout(
+    "duotone",
+    "デュオトーン",
+    "cool",
+    ("dela", "gothic", "mincho", "shippori"),
+    number=12,
+)
 def duotone(s):
     hue = fx.accent(s.image)
     # Pick the palette nearest the photo's own accent colour.
@@ -640,7 +652,9 @@ def duotone(s):
     return canvas
 
 
-@layout("aurora", "オーロラ", "cool", ("gothic", "maru", "mincho", "shippori"), number=13)
+@layout(
+    "aurora", "オーロラ", "cool", ("gothic", "maru", "mincho", "shippori"), number=13
+)
 def aurora(s):
     canvas = fill(s.size, "#060914")
     w, h = s.size
