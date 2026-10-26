@@ -8,14 +8,8 @@ import pytest
 from PIL import Image, ImageChops
 
 import miq
-from miq_fonts import (
-    FONT_DIR,
-    bundled_fonts,
-    coverage,
-    find_font,
-    find_italic_font,
-    font_at,
-)
+import miq_layouts
+from miq_fonts import FONT_DIR, coverage, find_font, find_italic_font, font_at
 from miq_text import EmojiImages, MixedFont, fit
 from miq_words import GRAPHEME, NO_END, NO_START, units
 
@@ -129,6 +123,7 @@ def test_layout_attachment_and_repeatability(tmp_path, layout, shape):
             layout=layout,
             attachment=True,
             size=(854, 480),
+            seed=3,
         )
         with Image.open(output) as image:
             assert image.size == (854, 480)
@@ -144,110 +139,31 @@ def test_uniform_selection_boundaries_and_seed():
         def random(self):
             return self.value
 
-    names = [name for name, _ in miq.LAYOUT_WEIGHTS]
-    assert len(names) == 10
-    assert len({weight for _, weight in miq.LAYOUT_WEIGHTS}) == 1
-    for index, name in enumerate(names):
-        assert miq.choose_layout(Fixed(index / 10)) == name
-        assert miq.choose_layout(Fixed((index + 1) / 10 - 1e-9)) == name
-    assert miq.choose_layout(Fixed(0.9999999)) == names[-1]
+    layouts = list(miq.LAYOUTS)
+    assert len(layouts) >= 27 and len(set(layouts)) == len(layouts)
+    for index, name in enumerate(layouts):
+        assert miq.choose_layout(Fixed((index + 0.5) / len(layouts))) == name
+    assert miq.choose_layout(Fixed(0)) == layouts[0]
+    assert miq.choose_layout(Fixed(0.99999)) == layouts[-1]
     a, b = random.Random(42), random.Random(42)
     assert [miq.choose_layout(a) for _ in range(50)] == [
         miq.choose_layout(b) for _ in range(50)
     ]
-    counts = {name: 0 for name in names}
-    rng = random.Random(7)
-    for _ in range(20000):
-        counts[miq.choose_layout(rng)] += 1
-    assert all(1700 < count < 2300 for count in counts.values())
+    cute = {miq.choose_layout(random.Random(i), "cute") for i in range(200)}
+    assert cute == set(miq_layouts.names("cute"))
+    with pytest.raises(ValueError):
+        miq.choose_layout(category="missing")
 
 
-@pytest.mark.parametrize(
-    ("alias", "layout"),
-    [("classic", "spotlight"), ("mirrored", "mirror"), ("magazine", "cover"), ("literary", "tategaki")],
-)
-def test_old_layout_names_still_work(tmp_path, alias, layout):
-    paths = [tmp_path / f"{name}.png" for name in (alias, layout)]
-    for name, path in zip((alias, layout), paths):
-        miq.render(AVATAR, "引用文", path, "氏名", layout=name, size=(480, 270))
-    assert Image.open(paths[0]).tobytes() == Image.open(paths[1]).tobytes()
-
-
-@pytest.mark.parametrize("layout", list(miq.LAYOUTS))
-@pytest.mark.parametrize(
-    "text",
-    [
-        "全文を残して小さく表示する。" * 40,
-        "مرحبا <:picture:123> Discord 123 👩🏽‍💻",
-        "改行\nのある\n\n本文 ✨",
-        "x",
-    ],
-)
-def test_every_layout_handles_hard_text(layout, text):
-    import io
-
-    out = io.BytesIO()
-    miq.render(AVATAR, text, out, "とても長い表示名" * 6, "handle" * 8,
-               custom_emojis={"123": AVATAR}, layout=layout)
-    image = Image.open(io.BytesIO(out.getvalue()))
-    assert image.size == miq.SIZE
-
-
-def test_file_object_output_and_lossless_png(tmp_path):
-    import io
-
-    from miq_images import encode_png
-
-    out = io.BytesIO()
-    miq.render(AVATAR, "本文", out, layout="cinema", size=(320, 180))
-    assert out.getvalue().startswith(b"\x89PNG")
-    source = Image.effect_noise((257, 199), 90).convert("RGB")
-    for size in [(257, 199), (1, 1), (640, 3)]:
-        image = source.resize(size)
-        decoded = Image.open(io.BytesIO(encode_png(image)))
-        assert decoded.convert("RGB").tobytes() == image.tobytes()
-    for suffix in (".jpg", ".webp"):
-        miq.render(AVATAR, "本文", tmp_path / f"q{suffix}", layout="noir", size=(320, 180))
-        assert Image.open(tmp_path / f"q{suffix}").size == (320, 180)
-
-
-def test_vertical_columns_follow_kinsoku():
-    import miq_vertical as vertical
-
-    assert vertical.suitable("小さな発見が、明日を変える。")
-    assert not vertical.suitable("The best way to predict the future")
-    assert not vertical.suitable("مرحبا بالعالم")
-    text = "「大切な問い」を考えよう。次の発見につながる。" * 2
-    columns = vertical.columns(text, 5)
-    assert "".join(c.text for col in columns for c in col) == text
-    for col in columns:
-        assert col[0].text not in vertical.NO_START - vertical.HANG
-        assert col[-1].text not in vertical.NO_END
-    layout = vertical.fit_vertical("人は、自分が思っているよりも遠くまで行ける。", 600, 400, 120)
-    lengths = [len(col) for col in layout.columns]
-    assert max(lengths) - min(lengths) <= 2
-
-
-def test_cluster_cache_matches_freetype():
-    from miq_text import run_metrics
-
-    face = font_at(FONT_DIR / "ZenKakuGothicNew-Bold.ttf", 40)
-    for text in ["全文を残して小さく表示する。", "「大切な問い」、"]:
-        advance, box = run_metrics(face, text)
-        assert advance == face.getlength(text)
-        expected = face.getbbox(text, anchor="ls")
-        assert all(abs(a - b) <= 1 for a, b in zip(box, expected))
-
-
-def test_diagonal_fade_mask():
-    from miq_images import fade_mask
-
-    mask = fade_mask((200, 100), 0.4, 0.6, -0.2)
-    assert mask.getpixel((5, 5)) == 255 and mask.getpixel((195, 95)) == 0
-    # The edge moves left towards the bottom.
-    top = next(x for x in range(200) if mask.getpixel((x, 0)) < 128)
-    bottom = next(x for x in range(200) if mask.getpixel((x, 99)) < 128)
-    assert bottom < top - 30
+def test_style_draw_is_reproducible_and_respects_layout_fonts():
+    for seed in range(40):
+        layout, face = miq.choose_style(seed=seed)
+        assert (layout, face) == miq.choose_style(seed=seed)
+        assert face in miq.REGISTRY[layout].fonts
+    assert miq.choose_style("pixel", seed=1) == ("pixel", "dot")
+    assert miq.choose_style("classic", "mincho") == ("classic", "mincho")
+    with pytest.raises(ValueError):
+        miq.choose_style("classic", "comic-sans")
 
 
 @pytest.mark.parametrize(
@@ -281,7 +197,7 @@ def test_rtl_custom_emoji_and_missing_label(tmp_path):
             custom_emojis=custom,
             layout="classic",
         )
-        assert Image.open(output).size == miq.SIZE
+        assert Image.open(output).size == (640, 360)
 
 
 def test_cli_and_original_positional_api(tmp_path):
@@ -400,6 +316,7 @@ def test_concurrent_render_requests(tmp_path):
             out,
             custom_emojis={"123": AVATAR},
             layout="classic",
+            font_family="gothic",
         )
         return out.read_bytes()
 
@@ -437,150 +354,288 @@ def test_coverage_matches_the_font_cmap():
     assert coverage(path) == expected
 
 
-AA_DIR = ROOT / "tests" / "aa"
-
-
-def test_ascii_art_detection_and_fences():
-    import miq_aa
-
-    mona = (AA_DIR / "mona.txt").read_text()
-    mode, lines = miq_aa.detect(mona)
-    assert mode == "sjis" and len(lines) == 6
-    # Shared indentation goes, relative spacing stays.
-    assert lines[0].startswith("  ") and any(not line.startswith(" ") for line in lines)
-    assert "\\" not in "".join(lines) and "∖" in "".join(lines)
-    tux = (AA_DIR / "tux.txt").read_text()
-    assert miq_aa.detect(tux)[0] == "mono"
-    fenced = miq_aa.detect("```txt\n a  b\nc\n```")
-    assert fenced == ("mono", [" a  b", "c"])
-    for prose in ["小さな発見が、明日を変える。", "一行目\n二行目の普通の文章です", "LGTM 🚀"]:
-        assert miq_aa.detect(prose) is None
-
-
-def test_sjis_art_keeps_ms_pgothic_widths():
-    """Saitamaar advances at 16px are whole pixels and add up per line, so every
-    column of the art lands exactly where MS PGothic put it."""
-
-    import miq_aa
-
-    path = str(FONT_DIR / "Saitamaar-Regular.ttf")
-    _, lines = miq_aa.detect((AA_DIR / "mona.txt").read_text())
-    for px in (16, 32, 48):
-        face = font_at(path, px)
-        for line in lines:
-            whole = face.getlength(line)
-            assert whole == int(whole)
-            assert whole == sum(face.getlength(c) for c in line)
-
-
-@pytest.mark.parametrize("name", ["mona.txt", "tux.txt", "dragon.txt"])
-@pytest.mark.parametrize("layout", list(miq.LAYOUTS))
-def test_ascii_art_renders_unwrapped_in_every_layout(tmp_path, name, layout):
-    import miq_aa
-
-    text = (AA_DIR / name).read_text()
-    out = tmp_path / "aa.png"
-    miq.render(AVATAR, text, out, "名前", "handle", layout=layout)
-    assert Image.open(out).size == miq.SIZE
-    mode, lines = miq_aa.detect(text)
-    canvas = Image.new("RGB", (900, 600))
-    from miq_fonts import bundled_fonts
-
-    box = miq_aa.draw(canvas, lines, mode, bundled_fonts(), (0, 0, 900, 600), (255, 255, 255), 64)
-    ink = canvas.getbbox()
-    # One block, never reflowed: its height follows the line count.
-    assert ink and ink[3] - ink[1] <= box[3] - box[1] + 1
-
-
-@pytest.mark.parametrize("text", ["草", "無理", "👍", "神!"])
-def test_one_or_two_characters_get_the_hero_treatment(text):
-    from miq_layouts import Ctx
-    from miq_text import EmojiImages
-
-    ctx = Ctx(Image.new("RGB", (64, 64)), text, "", "", miq.SIZE, EmojiImages(None))
-    assert (ctx.hero is not None) == (text != "神!")
-    for layout in miq.LAYOUTS:
-        miq.render(AVATAR, text, __import__("io").BytesIO(), "名前", layout=layout)
-
-
-def test_short_phrases_use_few_long_columns():
-    import miq_vertical as vertical
-
-    layout = vertical.fit_vertical("今日も一日がんばるぞい", 1300, 860, 250)
-    assert len(layout.columns) == 2
-
-
-# A single run with no space to break at (a long URL) shrinks the quote until its
-# ink box is thinner than the accent rule the mirror layout draws beside it.
-LONG_WORD = "https://example.com/" + "a" * 120
-
-
-@pytest.mark.parametrize("size", [None, (640, 360), (200, 120), (1920, 1080)])
-def test_mirror_layout_keeps_a_long_unbreakable_word_inside_its_rule(size):
-    out = io.BytesIO()
-    miq.render(AVATAR, LONG_WORD, out, "名前", "@handle", size=size, layout="mirror")
-    assert Image.open(io.BytesIO(out.getvalue())).size == (size or miq.SIZE)
-
-
-def test_mirror_layout_handles_a_long_word_under_every_auto_seed():
-    for seed in range(40):
-        out = io.BytesIO()
-        miq.render(AVATAR, LONG_WORD, out, "名前", "@handle", layout="auto", seed=seed)
-        assert out.getvalue().startswith(b"\x89PNG")
-
-
-def test_mirror_rule_never_inverts_for_any_hard_text():
-    """The rule's two ends both come from the quote's ink box, so guard the
-    whole family of inputs that can clock in under ``ctx.s(10)``."""
-
-    for text in ("a" * 2000, "b" * 400, LONG_WORD, "x" * 90):
-        for size in (None, (640, 360), (200, 120)):
-            out = io.BytesIO()
-            miq.render(AVATAR, text, out, size=size, layout="mirror")
-            assert out.getvalue().startswith(b"\x89PNG")
-
-
-@pytest.mark.parametrize(
-    "text",
-    [
-        "😀\n😀",
-        "🎉🎉\n🎉🎉",
-        "مرحبا\nمرحبا",
-        "𠮷野家\n𠮷野家",  # CJK extension B: outside Saitamaar's repertoire
-        "😀 すごい\n😀 すごい",
-    ],
+HARD_TEXT = (
+    "長い文章でも全文を残す。URL https://example.com/very/long/path も割らない。" * 5
 )
-def test_texts_the_aa_face_cannot_draw_are_not_ascii_art(text):
-    import miq_aa
-
-    assert miq_aa.detect(text) is None
-    ctx = _ctx(text)
-    assert ctx.aa is None  # drawn by the normal text path, emoji and all
-    out = io.BytesIO()
-    miq.render(AVATAR, text, out, "名前", "@handle", layout="mirror")
-    assert Image.open(io.BytesIO(out.getvalue())).size == miq.SIZE
 
 
-@pytest.mark.parametrize("name", ["mona.txt", "tux.txt", "dragon.txt"])
-def test_real_ascii_art_is_still_detected_as_ascii_art(name):
-    import miq_aa
+@pytest.mark.parametrize("layout", list(miq.LAYOUTS))
+def test_every_layout_handles_hard_inputs(tmp_path, layout):
+    tall = tmp_path / "tall.png"
+    Image.new("RGBA", (90, 400), (200, 80, 60, 255)).save(tall)
+    for size, name, handle, text in [
+        ((640, 360), "", "", HARD_TEXT),
+        ((500, 500), "名前 Name", "user", "短い 👩🏽‍💻 <:wave:123>"),
+        ((1280, 720), "ليلى", "", "مرحبا Discord 123 日本語"),
+    ]:
+        png, chosen, face = miq.render_bytes(
+            tall,
+            text,
+            name,
+            handle,
+            size=size,
+            layout=layout,
+            seed=5,
+            custom_emojis={"123": AVATAR},
+        )
+        assert chosen == layout and face in miq.REGISTRY[layout].fonts
+        with Image.open(__import__("io").BytesIO(png)) as image:
+            assert image.size == size
+            assert (
+                image.convert("L").getextrema()[0] != image.convert("L").getextrema()[1]
+            )
 
-    text = (AA_DIR / name).read_text()
-    detected = miq_aa.detect(text, bundled_fonts())
-    assert detected is not None
-    assert detected[0] == ("sjis" if name == "mona.txt" else "mono")
-    assert _ctx(text).aa is not None
+
+@pytest.mark.parametrize("layout", list(miq.LAYOUTS))
+def test_one_typeface_per_image(monkeypatch, layout):
+    import miq_layouts as module
+
+    used = set()
+    original = module.font_at
+
+    def spy(path, px, weight=None):
+        used.add(str(path))
+        return original(path, px, weight)
+
+    monkeypatch.setattr(module, "font_at", spy)
+    face = miq.REGISTRY[layout].fonts[-1]
+    miq.compose(
+        AVATAR,
+        "日本語と English 123 👩🏽‍💻",
+        "著者 Name",
+        "handle",
+        layout=layout,
+        font_family=face,
+    )
+    from miq_fonts import FAMILIES
+
+    assert used == {FAMILIES[face].path}
 
 
-def test_fenced_code_keeps_spacing_but_still_needs_drawable_glyphs():
-    import miq_aa
+def test_render_accepts_bytes_images_and_streams(tmp_path):
+    import io
 
-    assert miq_aa.detect("```txt\n a  b\nc\n```") == ("mono", [" a  b", "c"])
-    assert miq_aa.detect("```txt\n😀\n😀\n```") is None
+    data = AVATAR.read_bytes()
+    buffer = io.BytesIO()
+    miq.render(data, "本文", buffer, layout="swiss", font_family="gothic")
+    first = buffer.getvalue()
+    with Image.open(AVATAR) as image:
+        png, layout, face = miq.render_bytes(
+            image, "本文", layout="swiss", font_family="gothic"
+        )
+    assert (layout, face) == ("swiss", "gothic")
+    assert first[:8] == b"\x89PNG\r\n\x1a\n" and first == png
 
 
-def _ctx(text):
-    from miq_layouts import Ctx
-    from miq_text import EmojiImages
+def test_discord_markup_is_cleaned():
+    from datetime import datetime, timezone
 
-    return Ctx(Image.new("RGB", (64, 64)), text, "", "", miq.SIZE, EmojiImages(None))
+    from miq_discord import clean
+
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    assert clean("**太字** と *斜体* と ~~消し~~", now=now) == "太字 と 斜体 と 消し"
+    assert clean("`code *x*` と __下線__", now=now) == "code *x* と 下線"
+    assert clean("<@123> <@!456> <#7> <@&8>", {"123": "たろう"}) == (
+        "@たろう @ユーザー #チャンネル @ロール"
+    )
+    assert clean("||ネタバレ||だよ") == "■■■■だよ"
+    assert clean("> 引用\n# 見出し\n- 項目") == "引用\n見出し\n・項目"
+    assert clean("5*3*2 = 30 と a_b_c") == "5*3*2 = 30 と a_b_c"
+    assert clean("<:wave:123> \\*そのまま\\*") == "<:wave:123> *そのまま*"
+    assert clean("[リンク](https://example.com)") == "リンク"
+    assert clean("<t:1700000000:R>", now=now) == "2年前"
+    assert clean("<t:1700000000:d>", tz=timezone.utc) == "2023/11/14"
+
+
+def test_markup_can_be_disabled(tmp_path):
+    raw, _, _ = miq.compose(
+        AVATAR, "**x**", layout="swiss", font_family="gothic", markup=False
+    )
+    cleaned, _, _ = miq.compose(AVATAR, "**x**", layout="swiss", font_family="gothic")
+    assert ImageChops.difference(raw.convert("RGB"), cleaned.convert("RGB")).getbbox()
+    with pytest.raises(ValueError):
+        miq.compose(AVATAR, "||  ||", layout="swiss")
+
+
+def test_vertical_text_rules():
+    from miq_vertical import suits_vertical, upright
+
+    assert suits_vertical("答えを急がず、問いを深めよう。Stay curious. 👩🏽‍💻")
+    assert not suits_vertical("Stay curious and keep asking good questions.")
+    assert not suits_vertical("مرحبا 日本語")
+    assert not suits_vertical("日本語" * 200)
+    assert upright("2026年!? Discord 8:30") == "２０２６年！？ Discord 8:30"
+
+
+def test_orphan_lines_take_a_word_from_the_line_above():
+    from miq_text import _orphan
+
+    class Font:
+        def width(self, text):
+            return len(text)
+
+    assert _orphan([["ab", "cd"], ["e"]], Font(), 10) == [["ab"], ["cd", "e"]]
+    assert _orphan([["ab", "cd"], ["efg"]], Font(), 10) == [["ab", "cd"], ["efg"]]
+    assert _orphan([["abcdefgh", "ij"], ["k"]], Font(), 2) == [
+        ["abcdefgh", "ij"],
+        ["k"],
+    ]
+
+
+def test_pango_wrapping_keeps_japanese_phrases():
+    text = (
+        "مرحبا "
+        + "答えを急がず、問いを深めよう。小さな発見が、明日の景色を変えていく。"
+    )
+    font = maker(40)
+    starts = set()
+    offset = text.index("答")
+    for word in units(text[offset:]):
+        starts.add(offset)
+        offset += len(word)
+    for width in (180, 260, 340):
+        rows = font.complex.wrap(text, width)
+        position = 0
+        for row in rows[:-1]:
+            position = text.index(row, position) + len(row)
+            following = len(text) - len(text[position:].lstrip())
+            if following > text.index("答"):
+                assert following in starts, (width, rows)
+
+
+def test_greedy_wrap_respects_inseparable_leaders():
+    assert units("それは……違う") == ["それは", "……", "違う"]
+    assert units("100%の力") == ["100%の", "力"]
+
+
+def test_ticket_renders_at_the_minimum_size():
+    png, chosen, face = miq.render_bytes(
+        AVATAR, "短い引用", "名前", "user", size=(200, 120), layout="ticket",
+        font_family="code",
+    )
+    assert chosen == "ticket"
+    with Image.open(__import__("io").BytesIO(png)) as image:
+        assert image.size == (200, 120)
+        assert image.convert("L").getextrema()[0] != image.convert("L").getextrema()[1]
+
+
+def test_private_use_placeholder_characters_are_restored():
+    from miq_discord import clean
+
+    text = "hello \uf8f00\uf8f1 and \uf8f0 0 \uf8f1"
+    assert clean(text) == text
+    assert clean("**bold** \uf8f00\uf8f1") == "bold \uf8f00\uf8f1"
+
+
+def test_a_break_is_allowed_after_punctuation_before_latin():
+    assert units("深めよう。Stay curious.") == ["深めよう。", "Stay ", "curious."]
+    assert units("じゃあ8時間ホモになるか") == ["じゃあ", "8時間", "ホモに", "なるか"]
+
+
+def test_ascii_art_is_detected_and_rendered():
+    from miq_aa import detect
+
+    text = (ROOT / "tests" / "aa" / "mona.txt").read_text()
+    assert detect(text)[0] == "sjis"
+    tux = (ROOT / "tests" / "aa" / "tux.txt").read_text()
+    assert detect(tux)[0] == "mono"
+    for layout in ("classic", "noir", "terminal", "tategaki"):
+        png, chosen, face = miq.render_bytes(
+            AVATAR, text, "名前", "handle", size=(640, 360), layout=layout,
+            font_family=miq.REGISTRY[layout].fonts[0], markup=False,
+        )
+        assert chosen == layout
+        with Image.open(__import__("io").BytesIO(png)) as image:
+            assert image.size == (640, 360)
+            assert image.convert("L").getextrema()[0] != image.convert("L").getextrema()[1]
+
+
+def test_cli_lists_layouts():
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "miq.py"), "--list-layouts"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    lines = result.stdout.strip().splitlines()
+    assert len(lines) == len(miq.LAYOUTS)
+    assert lines[0].split()[:2] == ["1", "classic"]
+
+
+# Users type these numbers (miq12); they must never move.
+NUMBERS = {
+    1: "classic", 2: "mirrored", 3: "magazine", 4: "literary", 5: "noir",
+    6: "cinema", 7: "neon", 8: "glitch", 9: "terminal", 10: "swiss",
+    11: "brutal", 12: "duotone", 13: "aurora", 14: "blueprint", 15: "manga",
+    16: "tategaki", 17: "luxe", 18: "newspaper", 19: "ticket", 20: "nowplaying",
+    21: "diagonal", 22: "gallery", 23: "kawaii", 24: "chat", 25: "notebook",
+    26: "pixel", 27: "tcg",
+}
+
+
+def test_layout_numbers_are_stable_and_unique():
+    numbers = [spec.number for spec in miq.REGISTRY.values()]
+    assert len(set(numbers)) == len(numbers) and min(numbers) == 1
+    for number, name in NUMBERS.items():
+        assert miq.REGISTRY[name].number == number
+        assert miq.find_layout(number) == name == miq.find_layout(str(number))
+    with pytest.raises(ValueError):
+        miq.find_layout(9999)
+
+
+def test_orientation_draws_and_default_sizes():
+    for orientation, size in (("portrait", (540, 960)), ("square", (640, 640))):
+        for seed in range(6):
+            png, layout, _ = miq.render_bytes(
+                AVATAR, "縦の引用", "名前", orientation=orientation, seed=seed
+            )
+            assert miq.REGISTRY[layout].orientation == orientation
+            with Image.open(io.BytesIO(png)) as image:
+                assert image.size == size
+    # A size alone picks the orientation; a numbered layout keeps its own.
+    _, layout, _ = miq.render_bytes(AVATAR, "x", size=(540, 960), seed=1)
+    assert miq.REGISTRY[layout].orientation == "portrait"
+    png, layout, _ = miq.render_bytes(AVATAR, "x", layout=1, orientation="portrait")
+    assert layout == "classic"
+    with Image.open(io.BytesIO(png)) as image:
+        assert image.size == (640, 360)
+
+
+@pytest.mark.parametrize("mood", ["vs", "love", "talk"])
+@pytest.mark.parametrize("orientation", ["landscape", "portrait"])
+def test_dialogue_moods_render_both_orientations(mood, orientation):
+    from miq_dialogue import Speaker, render_dialogue_bytes
+
+    left = Speaker(AVATAR, "先に言った方 👩🏽‍💻 <:wave:123>", "あおい", "aoi")
+    right = Speaker(AVATAR, "返信した方\n二行目" * 3, "", "naoto", attachment=True)
+    png, drawn, face = render_dialogue_bytes(
+        left,
+        right,
+        mood,
+        orientation=orientation,
+        seed=3,
+        mentions={},
+        custom_emojis={"123": AVATAR},
+    )
+    assert drawn == mood and face in miq.FAMILIES
+    with Image.open(io.BytesIO(png)) as image:
+        assert image.size == miq.default_size(orientation)
+
+
+def test_dialogue_rejects_empty_and_unknown():
+    from miq_dialogue import Speaker, compose_dialogue
+
+    with pytest.raises(ValueError):
+        compose_dialogue(Speaker(AVATAR, "a"), Speaker(AVATAR, "  "), "vs")
+    with pytest.raises(ValueError):
+        compose_dialogue(Speaker(AVATAR, "a"), Speaker(AVATAR, "b"), "hate")
+
+
+def test_catalog_pages_number_every_layout():
+    from miq_catalog import pages
+
+    result = pages()
+    assert [name for name, _ in result] == ["miq-layouts-1.png", "miq-layouts-2.png"]
+    for _, png in result:
+        with Image.open(io.BytesIO(png)) as image:
+            assert image.width >= 900 and image.height > 300

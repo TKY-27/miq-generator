@@ -1,109 +1,92 @@
 # MIQ Generator
 
-Discordで返信に `miq` と打つと、返信先のメッセージとアイコンから名言画像を作る ——
-その画像を描くための、オフラインのPython描画器です。
+画像と引用文からPNGを作る、オフラインのPython描画器です。Discord Botからも呼び出せます。
 
-![noir](demo.png)
+![現行レイアウト](demo.png)
 
-- **10種類の構図を等確率（各10%）で抽選**します。
-- 短い一言が映えるように調整しつつ、長文も省略せず全文を収めます。
-- 1〜2文字（「草」「無理」など）は筆文字や縦組みで大きく描きます。
-- **アスキーアート（AA）をずらさず**に描きます。日本語AAは MS Pゴシック互換の Saitamaar、ASCIIアートは等幅フォントを使います。
-- 既定は960x540。旧版（640x360）より画素は2.25倍ですが、描画は旧版より速くなっています（[速さ](#速さ)）。
-- 描画にネット接続・画像生成AI・外部APIは不要です。
+## 33の構図と掛け合い
 
-## 目次
+![全構図の一覧](demo-gallery.jpg)
 
-- [10種類の構図](#10種類の構図)
-- [短い文・1〜2文字・長文](#短い文12文字長文)
-- [アスキーアート（AA）](#アスキーアートaa)
-- [フォント](#フォント)
-- [導入](#導入)
-- [CLI](#cli)
-- [Python / Discord Bot](#python--discord-bot)
-- [速さ](#速さ)
-- [構成](#構成)
-- [検証](#検証)
-- [ライセンスと注意](#ライセンスと注意)
+`--layout auto`（既定）は **同じ向きの構図から均等に抽選** し、続けてその構図に合う書体を抽選します。
+`--seed` で抽選を再現、`--layout` / `--font-family` で固定、`--category` で系統、`--orientation` で向きを絞れます。
+`python miq.py --list-layouts` で番号・向き・書体候補の一覧を表示します。
 
-## 10種類の構図
+**構図には固定の番号があります**（Botの `miq12` などで使用）。既存の構図の番号は今後も変えず、新しい構図は末尾に追加します。
+番号付きの一覧画像は `python miq_catalog.py`（`output/miq-layouts-*.png`）で作れます。
 
-`--layout auto`（既定）は下の10構図から各10%で選びます。`--layout` で固定でき、`--seed` で抽選を再現できます。
-
-| # | 名前 | 内容 |
-| --- | --- | --- |
-| 1 | `noir` | 白黒のアイコンが**斜めの境界**で黒へ溶ける Make it a Quote 風。明朝の本文と斜体の署名 |
-| 2 | `spotlight` | 旧 classic の後継。アイコンを上下いっぱいに置き、アイコンの主色で光と罫を入れる |
-| 3 | `mirror` | アイコンを右に置き、境界を逆向きの斜めにした構図。太字の左揃えにアクセントの縦線 |
-| 4 | `tategaki` | 和紙に**筆文字の縦書き**。朱の輪で囲んだアイコンと縦組みの署名 |
-| 5 | `cinema` | 映画の一場面。シネスコの黒帯、字幕、帯の中のクレジット、フィルムの粒子 |
-| 6 | `glass` | ぼかしたアイコンの上に半透明のカード。SNS投稿風のヘッダー |
-| 7 | `poster` | アイコンの主色を地にしたスイス風ポスター。極太の Dela Gothic One とデュオトーン |
-| 8 | `newspaper` | 新聞の一面。ブラックレターの題字、網点（ハーフトーン）の写真、明朝の見出し |
-| 9 | `terminal` | アイコンをぼかした壁紙の上のターミナル。引用をコマンドの出力として表示し、窓は内容に合わせて伸縮 |
-| 10 | `cover` | 雑誌の表紙。全面のアイコン、題字、下部に重ねた引用 |
-
-旧名の `classic`→`spotlight`、`mirrored`→`mirror`、`magazine`→`cover`、`literary`→`tategaki` も指定できます。
-
-![10構図](demo-layouts.png)
-
-アクセントの色は、アイコンから主色を取り出して決めます。アイコンごとに色が変わります。
-
-## 短い文・1〜2文字・長文
-
-| 本文 | 扱い |
+| 向き・系統 | 構図（番号 名前 表示名） |
 | --- | --- |
-| **1〜2文字**（漢字・かな・絵文字） | 普段横書きの構図では**縦に大きく**、縦書きの `tategaki` では**横に大きく**描きます。noir・mirror・cover・tategaki は筆文字（Yuji Syuku）を使います。newspaper は赤い「号外」付きの縦見出し、cinema は右端の縦字幕、terminal はブロック文字のバナーになります |
-| 短い文（24字以下・1行） | 各構図で大きく組みます。glass は中央揃え、tategaki は筆文字の縦書きで、2〜3行程度の長い列にまとめます |
-| 長文 | **文字数上限・最低フォントサイズはありません。** 縦横比を保って全文を縮小し、縦だけの圧縮や末尾の省略はしません。tategaki は明朝の縦書きに切り替え、欧文中心・RTLの本文は横組みにします |
+| 横・定番 `classic` | 1 `classic` クラシック / 2 `mirrored` ミラー / 3 `magazine` 誌面 / 4 `literary` 文芸 |
+| 横・カッコいい `cool` | 5 `noir` ノワール / 6 `cinema` シネマ（字幕） / 7 `neon` ネオン / 8 `glitch` グリッチ / 9 `terminal` ターミナル / 10 `swiss` スイス / 11 `brutal` ブルータル / 12 `duotone` デュオトーン / 13 `aurora` オーロラ（すりガラス） / 14 `blueprint` 青焼き / 15 `manga` マンガ / 16 `tategaki` 縦書き / 17 `luxe` 金箔 / 18 `newspaper` 新聞 / 19 `ticket` チケット / 20 `nowplaying` 再生中 / 21 `diagonal` 斜め分割 / 22 `gallery` 美術館 |
+| 横・かわいい `cute` | 23 `kawaii` パステル / 24 `chat` チャット / 25 `notebook` ノート / 26 `pixel` RPG会話窓 / 27 `tcg` トレカ |
+| 縦（9:16） | 28 `card` ガチャカード（N〜URのレアリティをseedで抽選） / 29 `story` ストーリー / 30 `poster` ポスター / 31 `tategaki_tall` 縦長縦書き |
+| 正方形 | 32 `polaroid` ポラロイド / 33 `post` SNS投稿 |
 
-![1〜2文字とAA](demo-special.png)
+![縦・正方形・掛け合い](demo-more.jpg)
 
-改行のルール:
+- 出力サイズの既定は 横 `640x360`・縦 `540x960`・正方形 `640x640`
+  （環境変数 `MIQ_SIZE` / `MIQ_PORTRAIT_SIZE` / `MIQ_SQUARE_SIZE` で変更）。
+  `--size` を指定すると、その縦横比から向きを判断します。番号や名前で選んだ構図は、その構図の向きで描きます。
+- **2人の掛け合い**（`miq_dialogue.py`）: `vs` 対戦（赤青・稲妻・VS）/ `love` ラブ（ハート）/ `talk` 会話（メッセンジャー風）。
+  横は左右、縦は上下に並べ、両者の本文は同じ文字サイズにそろえます。
+
+- `duotone` `diagonal` `ticket` はアイコンの主色から配色を決めます。
+- `tategaki` はPangoで本物の縦組み（約物・長音の縦用字形、欧文は横倒し、数字と「!?」は全角で直立、絵文字は直立）。
+  欧文が半分以上・アラビア文字などの右横書き・独自絵文字・220字超の本文では、同じデザインのまま横組みにします。
+- 装飾（グリッチの乱れ、集中線、星など）は本文から決まるので、同じ入力なら同じ画像になります。
+
+## 書体
+
+**1枚の画像の中では書体を1つに統一** します（本文・欧文・名前・handleとも同じファミリー。太さだけ変えます）。
+書体は構図ごとに相性のよい候補から抽選します（例: `pixel` はドット書体、`terminal` は等幅）。
+
+| `--font-family` | 書体 |
+| --- | --- |
+| `gothic` | Noto Sans JP |
+| `mincho` | Noto Serif JP |
+| `maru` | Zen Maru Gothic |
+| `shippori` | Shippori Mincho B1 |
+| `dela` | Dela Gothic One |
+| `dot` | DotGothic16 |
+| `code` | M PLUS 1 Code |
+| `klee` | Klee One |
+| `rocknroll` | RocknRoll One |
+
+`--font` を指定するとそのフォント1つで全テキストを描きます。絵文字はカラー絵文字フォントを使います。
+
+## 表示と改行
+
 - 日本語は単語と付属語、欧文は単語、絵文字は結合列をまとめて改行します。
-  例えば「じゃあ8時間ホモにな／るか」は「じゃあ8時間ホモに／なるか」になります。行の長さは均等に近づけます。
-- 縦書きは行頭・行末禁則、句読点のぶら下げ、2〜3桁の英数字の縦中横、長い欧文の90度回転に対応します。
-- 長いURLや単語も途中で割りません。その語が収まるまで全体を縮小します。
+  例えば「じゃあ8時間ホモにな／るか」は「じゃあ8時間ホモに／なるか」になります。
+- 禁則処理: 行頭禁止（句読点・閉じ括弧・小書き仮名・ASCIIの `)!?,.` など）、行末禁止（開き括弧）、
+  「……」「——」の分離禁止、`100%の` のような数字＋記号＋助詞の一体化。
+- 最終行が1〜2文字だけになる場合は前の行から1語送ります（CSSの `text-wrap: pretty` 相当）。
+- **文字数上限・最低フォントサイズはありません。** 全文を対象に、縦横比を保って縮小します。
+  1px未満の文字も仮想座標で配置し、巨大な中間画像を作らず描画します。縦だけの圧縮や末尾の省略はしません。
+- 長いURLや単語も途中で割らないため、その語が収まるまで全体の文字サイズが小さくなります。
+- **アスキーアート（AA）は折り返さず1ブロックで描きます**（Saitamaar / JetBrains Mono）。
+  AA用フォントが描けない文字（絵文字・アラビア語・補助漢字など）を含む場合はAAとみなさず、
+  通常のテキスト経路で描きます（無言で消さない）。
 - アラビア語・ヘブライ語の双方向表示、インド系文字の連結、他言語のフォント補完はPangoで処理します。
-- Unicode絵文字は色付きです。肌色、国旗、ZWJ、キーキャップにも対応します。Discord独自絵文字は、IDに対応する画像を渡します。
-- `--attachment` は添付画像を切り抜かずに置きます。全面系の構図では、余白をぼかした同じ画像で埋めます。
+  対応フォントが必要です。欠落する文字を検出した場合は導入を案内します。
+- Unicode絵文字は色付き。肌色、国旗、ZWJ、キーキャップに対応します。
+  Discord独自絵文字はIDに対応する画像を渡します。PNG出力なのでアニメーションは最初のフレームです。
+- **Discord記法を整形します**: `**太字**` `*斜体*` `~~打消~~` `` `code` `` `> 引用` `# 見出し` の記号を外し、
+  `||スポイラー||` は伏字（■）、`<@id>` `<@&id>` `<#id>` は `mentions` で渡した名前、`<t:…>` は日時に変換します。
+  不要なら `markup=False` / `--raw`。
 
-![長文の例](demo-long.png)
+### pretext について
 
-## アスキーアート（AA）
+[chenglou/pretext](https://github.com/chenglou/pretext) はブラウザのCanvas `measureText` を前提にしたTypeScriptライブラリです。
+このリポジトリはFreeType（Pillow）とPangoで描くため、そのまま組み込むと「測る書体エンジン」と「描く書体エンジン」が別になり、
+改行位置と実際の描画幅がずれます。Node.jsの依存とプロセス間通信も増え、禁則処理もありません。
+そこで中核の考え方（**prepare/layout の分離**: 語の分割と幅の計測を1回だけ行い、行組みは足し算だけで行う）をPythonに移植しました。
+確定した行だけ実測してカーニングやはみ出しを検証し、ずれたときは実測で組み直します。
 
-複数行で記号や空白の並びが多い本文、またはDiscordのコードブロック（```` ``` ````）は、AAとして扱います。
-AAは改行・空白・字間を一切変えず、1つの絵として縮小してから配置します。
+## 導入（Python 3.10以上 / Linux・Docker）
 
-| 種類 | 判定 | フォント | ずれない理由 |
-| --- | --- | --- | --- |
-| 日本語AA（SJIS AA） | ASCII・罫線以外の文字（全角・半角カナなど）を含む | Saitamaar | MS Pゴシック12pt（16px）と同じ文字幅です。16pxの倍数では全文字の幅が整数pxになるため、そのサイズで描いてから全体を縮小します。行送りは2ch標準の18px相当です |
-| ASCIIアート | ASCII・罫線・ブロック要素のみ | JetBrains Mono | 等幅です。合字（`->` など）は無効にしています |
-
-- 全行に共通する半角空白のインデントだけを取り除きます。相対位置は変わりません。
-- Saitamaar は半角 `\` を MS Pゴシック同様に `¥` で描きます。Discordでは `\` と見えるため、同じ幅のバックスラッシュ（U+2216）に置き換えます。
-- 検証には、GitHub上の実際のAA（モナー、cowsay の tux・dragon）を使っています。出典は `tests/aa/SOURCES.md` にあります。
-
-## フォント
-
-ゴシック一辺倒をやめ、構図ごとに和文と欧文を組み合わせています。
-
-| 用途 | 和文 | 欧文 |
-| --- | --- | --- |
-| 明朝（noir / newspaper / 長文の tategaki） | しっぽり明朝 B1 ExtraBold | Instrument Serif |
-| 筆文字（1〜2文字、短文の tategaki、署名） | Yuji Syuku | Instrument Serif |
-| ゴシック（spotlight / mirror / glass / cinema / cover） | Zen角ゴシック New Bold・Medium | Inter（可変） / Instrument Serif Italic |
-| 極太（poster） | Dela Gothic One | Dela Gothic One |
-| 等幅（terminal） | M PLUS 1 Code | JetBrains Mono |
-| AA | Saitamaar | Saitamaar / JetBrains Mono |
-| 署名・題字 | — | Cormorant Garamond Italic、Anton、UnifrakturMaguntia |
-
-フォントに無い文字は、同梱の Noto Sans JP とシステムの Noto フォントで補います。絵文字は Noto Color Emoji です。
-`--font` / `--bold-font` / `--italic-font` で本文・署名・欧文のフォントを差し替えられます。
-
-## 導入
-
-Python 3.10以上、Linux（またはDocker）。
+Ubuntu/Debian:
 
 ```bash
 sudo apt-get install libpango-1.0-0 libpangocairo-1.0-0 libcairo2 libfontconfig1 \
@@ -114,10 +97,10 @@ pip install -r requirements.txt
 python scripts/setup_fonts.py
 ```
 
-`setup_fonts.py` は、`scripts/fonts.json` に記録したフォントを固定コミットから一度だけ取得します。
-取得時に SHA-256 を確認し、ライセンス文書も保存します。フォント本体はGitに含めません。
+`setup_fonts.py` は承認済みフォントとOFLライセンスを一度だけ取得し、固定SHA-256を確認します（合計約75MB）。
+フォント本体はGitに含めません。取得後の画像生成にネット接続・画像生成AI・外部APIは不要です。
 より広い文字種が必要なら `fonts-noto-extra` も導入してください。
-Windows/macOS でも同じPython APIを使えますが、Pango/Cairo/Fontconfig を別途導入する必要があります。
+Windows/macOSでは同じPython APIを利用できますが、Pango/Cairo/Fontconfigの別途導入が必要です。
 
 Docker:
 
@@ -131,115 +114,174 @@ docker run --rm --network none -v "$PWD:/data" miq-generator \
 ## CLI
 
 ```bash
-python miq.py --avatar avatar.png --text '引用したい本文' \
-  --name '表示名' --handle 'username' -o quote.png
+# 構図と書体を抽選
+python miq.py --avatar avatar.png --text '引用したい本文' --name '表示名' --handle 'username'
 
-# 構図の固定・添付画像・UTF-8本文ファイル・HD出力
-python miq.py --image photo.jpg --attachment --text-file quote.txt \
-  --layout tategaki --size 1920x1080 -o quote.png
+# 構図・書体を固定、かわいい系だけから抽選、添付画像・HD出力
+python miq.py --avatar avatar.png --text '本文' --layout neon --font-family maru -o quote.png
+python miq.py --avatar avatar.png --text '本文' --category cute --seed 7
+python miq.py --image photo.jpg --attachment --text-file quote.txt --size 1920x1080
 ```
 
 | オプション | 説明 |
 | --- | --- |
-| `--avatar`, `--image` | 画像パス（必須）。PNG/JPEG/WebP/GIF など Pillow が読める画像 |
-| `--text`, `--quote` / `--text-file` | 本文、またはUTF-8のファイル。どちらか一方が必須 |
-| `--name`, `--handle` | 表示名とユーザー名（省略可） |
-| `--output`, `-o` | 出力先。既定は `quote.png`。拡張子が `.jpg` / `.webp` ならその形式で保存 |
-| `--size` | `960x540`（既定）、`1280x720`、`1920x1080` など（200x120以上） |
-| `--layout` | `auto`（既定。10構図から等確率）、構図名、または旧名 |
-| `--seed` | 自動抽選に使う整数シード |
-| `--attachment` | アイコン用の切り抜きをせず、添付画像として配置 |
-| `--align` | `spotlight` の本文位置。`right`（既定）または `center` |
-| `--font`, `--bold-font` | 本文・署名の和文フォントを差し替え |
-| `--italic-font` | 本文の欧文フォントを差し替え |
+| `--avatar`, `--image` | 画像パス（必須）。PNG/JPEG/WebP/GIFなどPillowが読める画像 |
+| `--text`, `--quote` / `--text-file` | 本文またはUTF-8ファイル。どちらか一方が必須 |
+| `--name`, `--handle` | 表示名とユーザー名（省略可能） |
+| `--output`, `-o` | 出力先。既定 `quote.png` |
+| `--size` | 既定は向きごと（横 `640x360` / 縦 `540x960` / 正方形 `640x640`）。`854x480`、`1920x1080` など |
+| `--layout` | `auto`（既定）、上表の構図名、または番号（`12`） |
+| `--orientation` | `auto` の抽選を `landscape` / `portrait` / `square` に絞る |
+| `--category` | `auto` の抽選を `classic` / `cool` / `cute` に絞る |
+| `--font-family` | `auto`（既定）または上表の書体名 |
+| `--seed` | 構図と書体の抽選を再現する整数シード |
+| `--attachment` | アイコン用の正方形切り抜きをせず、添付画像として配置（全面背景の構図ではトリミング） |
+| `--align` | `classic` 構図の `right`（既定）/ `center` |
+| `--raw` | Discord記法を整形しない |
+| `--fast` | 2倍描画を省いて約2倍速（細い線や小さな文字はやや粗くなる） |
+| `--font`, `--bold-font` | 全テキスト用 / 表示名だけに使うフォントファイル |
 | `--emoji-font` | 絵文字フォントを指定 |
+| `--italic-font` | `classic` などの欧文フォントを明示的に上書き（従来オプションを維持） |
+| `--list-layouts` | 構図の番号・向き・書体候補の一覧を表示して終了 |
 
-環境変数の `MIQ_SIZE`、`MIQ_TEXT_ALIGN`、`MIQ_FONT`、`MIQ_EMOJI_FONT`、`MIQ_ITALIC_FONT` も使えます。
+従来の環境変数 `MIQ_SIZE`、`MIQ_TEXT_ALIGN`、`MIQ_FONT`、`MIQ_EMOJI_FONT`、
+`MIQ_ITALIC_FONT` も利用できます。
 
 ## Python / Discord Bot
 
 ```python
-import asyncio, io
 from pathlib import Path
-from miq import render, warmup
+from miq import render, render_bytes, warmup
 
-warmup()  # Bot起動時に1回。フォント・日本語辞書・マスクを読み込み、初回の遅延を無くす
-
-buffer = io.BytesIO()  # ファイルを介さずPNGを受け取れる
-await asyncio.to_thread(
-    render, Path('avatar.png'), message.content, buffer,
-    author.display_name, author.name,
-    custom_emojis={'123': Path('wave.png')},
+render(
+    Path("avatar.png"),
+    "本文 👩🏽‍💻 <:wave:123> <@42>",
+    Path("quote.png"),
+    "表示名",
+    "username",
+    size="640x360",
+    custom_emojis={"123": Path("wave.png")},
+    mentions={"42": "たろう"},
 )
-buffer.seek(0)  # discord.File(buffer, 'quote.png') で送信
 
-# 添付画像をアイコンの代わりに使う・構図を固定する
-render(Path('photo.jpg'), '本文', Path('quote.png'), '表示名',
-       attachment=True, layout='cinema')
+# Bot向け: 画像はbytes/PIL画像のまま、結果はPNGのbytesと抽選された構図・書体
+warmup()  # 起動時に辞書・書体・絵文字を読み込んでおく
+png, layout, font_family = render_bytes(
+    avatar_bytes, "本文", "表示名", "username", category="cute", seed=1234
+)
+# discord.File(io.BytesIO(png), 'quote.png')
+
+# 向き・番号
+png, layout, font_family = render_bytes(avatar_bytes, "本文", orientation="portrait")
+png, layout, font_family = render_bytes(avatar_bytes, "本文", layout=28)
+
+# 2人の掛け合い（left が返信先＝先に話した人、right が返信）
+from miq_dialogue import Speaker, render_dialogue_bytes
+png, mood, font_family = render_dialogue_bytes(
+    Speaker(avatar_b, "先に言った方", "B", "b"),
+    Speaker(avatar_a, "返信した方", "A", "a"),
+    "vs",  # "love" / "talk"
+    orientation="portrait",
+)
 ```
 
-- 既存の位置引数と戻り値（`None`）は従来のままです。`output` にはパスのほか、`BytesIO` などのバイナリファイルも渡せます。
-- `layout`、`seed`、`attachment` はキーワード専用の引数です。
-- フォント・入力・固定の構図・ライブラリのバージョンが同じなら、同じ画像を再生成できます。
-- このリポジトリにDiscordのコマンド受信部分は含まれていません。返信で `miq` を受け取るBot側から、返信先の本文・表示名・ユーザー名・アイコン（または添付画像）を渡してください。
-- **Botのプロセス内で `render` を呼んでください。** 毎回 `python miq.py` を起動すると、Pythonと日本語辞書の読み込みで1枚あたり約0.4秒余計にかかります。
-- アイコンは `display_avatar.with_size(512)` 程度で十分です。大きすぎる画像は読み込みだけで遅くなります。
-- 独自絵文字はBot側で保存し、`custom_emojis` に渡します。画像が無い独自絵文字は `:name:` と表示します。
-- AAを送るときは本文（コードブロックの ```` ``` ```` も含めて）をそのまま渡してください。
+- `render()` の既存の位置引数と戻り値（`None`）は維持しています。`output` にはパスか書き込み可能なバイナリストリームを渡せます。
+- キーワード専用の引数: `layout`（名前か番号）、`font_family`、`category`、`orientation`、`seed`、`attachment`、`mentions`、`markup`、`date`、`fast`。
+- `find_layout(12)` で番号→構図名、`default_size("portrait")` で向きごとの既定サイズを得られます。
+- `choose_style(layout, font_family, category=…, seed=…)` で、描画せずに抽選結果だけを得られます。
+- `custom_emojis` の値はパスでもbytesでも構いません。画像が渡されない独自絵文字は `:name:` で表示します。
+- 同じ書体・入力・構図・seed・描画ライブラリのバージョンなら同じ画像を再生成できます。
 
-## 速さ
+描画はCPU処理なので、イベントループで直接実行しないでください。Pythonの処理部分はGILを持つため、
+同時リクエストが多いBotでは `ProcessPoolExecutor(initializer=warmup)` で別プロセスに渡すのが最速です
+（`asyncio.to_thread` でも動作します）。
 
-`python scripts/benchmark.py` の結果です（4コアのLinux、ウォーム時の中央値。旧版は旧ベンチマークの同じ本文で計測）:
+### Bot
 
-| | 旧版（640x360） | 新版（960x540） |
-| --- | --- | --- |
-| 通常の本文 | classic 29ms / 他の3構図 96〜105ms | 全10構図 14〜25ms（全体の中央値 20ms） |
-| 長文 | classic 72ms / 他の3構図 394〜1073ms | 27〜56ms |
-| 1280x720 で出力した場合 | — | 中央値 32ms |
-| CLIを1回起動した場合 | 約0.8秒 | 約0.4秒 |
+[`bot/example_bot.py`](bot/example_bot.py) は discord.py 2.x のBotです（コマンド解釈は `bot/commands.py`、
+対象メッセージの集め方は `bot/gather.py`、描画プロセスで動く処理は `bot/jobs.py`）。
 
-主な最適化:
-- 1920x1080で描いてから縮小していた構図を、出力サイズで直接描くようにしました。
-- 和文の字形と寸法をグリフ単位で、固定の見出し（題字など）を描画済みマスクとしてキャッシュし、FreeTypeの再描画を省いています。
-- 不透明な画像はRGBのまま処理します。拡大はbicubic/bilinear、縮小のときだけLANCZOSを使います。
-- 暗幕・ビネット・グラデーション・角丸などのマスクは、サイズごとにキャッシュしています。複数の暗幕は1回の乗算にまとめています。
-- PNGはUpフィルタをCで計算し、deflateを複数スレッドで並列に実行します（可逆な標準PNGです）。
-- Pango/Cairoは、RTLなど複雑な文字列を描くときだけ読み込みます。フォントの文字表はディスクにキャッシュしています。
+```bash
+pip install -r requirements.txt -r bot/requirements.txt
+DISCORD_TOKEN=... python bot/example_bot.py
+```
 
-## 構成
+引用したいメッセージに **返信して** 送ります（全角・大文字も可）。
 
-| ファイル | 役割 |
+| 入力 | 動作 |
 | --- | --- |
-| `miq.py` | CLI、`render()`・`warmup()`、構図の抽選、保存 |
-| `miq_layouts.py` | 10構図と描画部品（本文の配置、署名、影、1〜2文字の描画） |
-| `miq_text.py` | 文字の計測・改行・縮小、絵文字、グリフのキャッシュ |
-| `miq_vertical.py` | 縦書き（禁則、ぶら下げ、縦中横、列の均等化） |
-| `miq_aa.py` | AAの判定と、ずれない描画、ブロック文字バナー |
-| `miq_images.py` | 画像の配置、マスク・質感・網点、PNG出力 |
-| `miq_complex.py` | Pango/Cairoによる双方向・複雑な文字列 |
-| `miq_words.py` | 単語・書記素の境界（Janome） |
-| `miq_fonts.py` | フォントの役割、探索、文字表のキャッシュ |
-| `scripts/` | フォント取得（`setup_fonts.py`・`fonts.json`）とベンチマーク |
-| `tests/` | テスト一式と、実際のAAの検証データ（`tests/aa/`） |
+| `miq` | そのメッセージを引用 |
+| `miqmiq` / `miqmiqmiq` … | その人の直前の発言も1つにまとめて引用（繰り返した数だけ・最大10件）。間に挟まった他人の発言は飛ばします（遡るのは100件・1時間まで） |
+| `miq12` / `miqmiq12` / `miq 12` | 構図を番号で指定（繰り返し＝件数、数字＝構図） |
+| `miq 縦` `miq 正方形` `miq 横` | 比率（`tall` `9:16` `square` `1:1` なども可） |
+| `miq cool` `miq cute` `miq classic` | 系統 |
+| `miq vs` / `miq love` / `miq talk` | 返信先の人との掛け合い。各自の **連続した発言をすべて**（間隔10分・最大8件）描きます。返信でない場合は直前に話した別の人が相手 |
+| `miq台帳` / `miq一覧`（返信不要） | 番号付きの構図一覧画像 |
+| `miq help`（返信不要） | 使い方 |
+
+オプションは組み合わせられます（例 `miqmiq 縦 cute`、`miq vs 縦`）。
+
+- 添付画像・スタンプ（PNG/APNG/GIF）・GIFや画像のリンク（Tenorなど）も描きます。動くものは1フレーム目、
+  複数枚は1枚に並べ、スポイラー画像はぼかします。画像だけのメッセージも引用できます。
+- 返信の下に 🎲「別の構図」、📐「縦横」切り替え、系統メニュー。キャプションに `#番号 構図名 · 書体` を表示。
+- 右クリック「Make it a Quote」も使えます。同じ人の連続実行は5秒あけます（`MIQ_COOLDOWN`）。
+- 起動時に全ワーカーを `warmup()` 済みにし、構図台帳も先に作っておきます。アイコン・絵文字は並列に取得してキャッシュします。
+  各段階の所要時間（取得・描画・送信）をログに出すので、遅いときはどこが原因か確認できます。
+
+## 速度
+
+`python scripts/benchmark.py`（ウォーム時の中央値、同じ環境で計測）:
+
+| | 改善前 | 改善後 |
+| --- | ---: | ---: |
+| 代表8ケース全体 | 57.6ms | 29.5ms |
+| `classic` 640x360 | 32.2ms | 26.3ms |
+| `mirrored` 854x480 | 103.0ms | 46.4ms |
+| `magazine` 854x480 | 88.2ms | 32.0ms |
+| `literary` 1920x1080 | 73.1ms | 47.4ms |
+| 全27構図 640x360 | — | 65.8ms → **54.8ms** |
+| 縦・正方形の構図 | — | 36〜123ms |
+| Botの各ワーカーの初回描画 | 500〜600ms | **50〜100ms** |
+
+主な改善:
+
+- 改行のサイズ探索で、語の幅を一度だけ測り足し算で行を組む（pretext方式）。分割結果もキャッシュ。
+- 文字は128pxで描いて縮小するのをやめ、実寸の書体で直接描画。
+- 新構図は最大2倍で描いて `reduce` で縮小（LANCZOSより高速で同等の品質）。旧来の3倍描画は廃止。
+- グラデーション・ぼかし・網点・ノイズはCの画素演算と縮小解像度で処理し、サイズごとにキャッシュ。
+- 大きな写真は整数倍の `reduce` で先に縮め、拡大時はbicubicを使用。PNGの圧縮レベルを6→3に。
+- PNG保存を独自の並列エンコーダ（Upフィルタ＋帯ごとのdeflate）に変更。同等サイズで約1/3の時間。
+- 角丸マスクは四隅だけ超標本化（全面を4倍で描いた結果と画素単位で一致）。罫線は線の範囲だけ合成。
+- 2倍描画の縮小をRGBで行い、乗算済みRGBAへの変換往復を省略。
+- `warmup()` で全構図を一度描き、Pango/Cairoの読み込み（約1秒）や文字マップ解析を起動時に済ませる。
+
+## リポジトリの同期
+
+このリポジトリ（TKY-27/miq-generator）の `main` は、上流 [kuraneko1/miq-generator](https://github.com/kuraneko1/miq-generator)
+の PR #4 統合済みの版（`2ed66ab`）から続いています。上流の `main` へPR #4 がまだ反映されていない場合は、
+上流側でローカルの `main` を push してください。手元のクローンは次で合わせられます。
+
+```bash
+git remote add upstream https://github.com/kuraneko1/miq-generator   # 初回のみ
+git fetch origin upstream
+git checkout main && git merge --ff-only origin/main
+```
 
 ## 検証
 
 ```bash
 pip install pytest
 python -m pytest -q
-python scripts/benchmark.py            # 全構図のウォーム時の描画時間とCLIの起動時間
-python scripts/benchmark.py 5 1280x720 # 出力サイズを変えて計測
+python scripts/benchmark.py   # 主要な構図の描画時間（ウォーム時）を計測
+python scripts/gallery.py     # 全構図を output/gallery/ に描画し、一覧画像を作る
+python miq_catalog.py         # Botの「miq台帳」と同じ番号付き一覧を output/ に作る
 ```
 
-次の内容を検証しています:
-- 単語単位の改行、結合文字、絵文字のキャッシュ、長文の末尾、1px未満への縮小、多言語
-- 全10構図と、難しい本文（長文・RTL・独自絵文字・改行・1文字）や画像比率との組み合わせ
-- 1〜2文字の扱い、縦書きの禁則と列の均等化
-- AAの判定、コードブロック、MS Pゴシック互換の文字幅、全構図でのAA描画
-- 等確率の抽選、旧名、BytesIOへの出力、PNGの可逆性、CLI/API、再現性、並行描画
+単語改行、禁則、孤立行、Pangoでの語の保護、縦書きの判定、結合文字、絵文字キャッシュ、長文末尾、
+1px未満の縮小、多言語、全構図×画像比率×出力比率、1枚1書体、Discord記法、CLI/API、抽選、再現性を検証します。
 
-## ライセンスと注意
+![長文の例](demo-long.png)
 
-- デモ画像には、リポジトリ内で合成した `demo-avatar.png` を使っています。第三者の投稿・アイコンや生成物を誤ってコミットしないよう、`quote.png` と `output/` はGitの対象外にしています。
-- 本ツールは Make it a Quote 風の独自実装で、公式Botではありません。
-- フォントは SIL Open Font License 1.1 です（Saitamaar のみパブリックドメイン）。詳細は `fonts/README.md` を見てください。フォントを含むDockerイメージなどを配布する場合は、取得したライセンス文書も一緒に含めてください。
+デモにはリポジトリ内で合成した `demo-avatar.png` を使用しています。
+第三者の投稿・アイコンや生成物を誤ってコミットしないよう、`quote.png`、`output/` はGitの対象外です。
+本ツールはMake it a Quote風の独自実装で、公式Botではありません。

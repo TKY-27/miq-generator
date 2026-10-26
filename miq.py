@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline quote PNG renderer: ten equally likely layouts and the original CLI."""
+"""Offline quote PNG renderer: 27 layouts, one typeface per image, CLI and API."""
 
 from __future__ import annotations
 
@@ -8,46 +8,59 @@ import io
 import os
 import random
 import re
-from functools import lru_cache
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageOps
 
+import miq_layouts
+from miq_designs import dark_background, line_anchor, text_region
+from miq_discord import clean
 from miq_fonts import (
+    FAMILIES,
     FONT_DIR,
     bundled_fonts,
+    coverage,
+    custom_family,
+    family,
     find_emoji_font,
     find_font,
     find_italic_font,
     font_at,
 )
-from miq_images import encode_png, read_image
-from miq_layouts import ALIASES, LAYOUTS, Ctx
-from miq_text import (
-    EmojiImages,
-    MixedFont,
-    fit,
-    wrap_words,
-)
+from miq_images import encode_png
+from miq_layouts import REGISTRY, Scene
+from miq_text import EmojiImages, MixedFont, fit, wrap_words
 from miq_words import units
 
-SIZE = (960, 540)
+SIZE = (640, 360)
+# Default output per orientation (MIQ_SIZE / MIQ_PORTRAIT_SIZE / MIQ_SQUARE_SIZE).
+SIZES = {"landscape": SIZE, "portrait": (540, 960), "square": (640, 640)}
+SIZE_ENV = {
+    "landscape": "MIQ_SIZE",
+    "portrait": "MIQ_PORTRAIT_SIZE",
+    "square": "MIQ_SQUARE_SIZE",
+}
 BASE_SIZE = (1920, 1080)
 ALIGN_CHOICES = ("center", "right")
-TEXT_LEFT = {"right": 1010, "center": 845}
-TEXT_RIGHT = 1780
-CENTER_SHIFT = 0.05
 LINE_HEIGHT = 1.43
-# Every layout is equally likely.
+LAYOUTS = tuple(REGISTRY)
+# Every layout is equally likely (kept as pairs for the old public name).
 LAYOUT_WEIGHTS = tuple((name, 1) for name in LAYOUTS)
+PNG_COMPRESSION = 3
 __all__ = [
     "BASE_SIZE",
     "LAYOUTS",
     "SIZE",
     "choose_layout",
+    "choose_style",
+    "default_size",
+    "find_layout",
+    "compose",
+    "dark_background",
     "find_font",
     "fit_text",
     "render",
+    "render_bytes",
     "resolve_align",
     "resolve_size",
     "text_region",
@@ -74,10 +87,88 @@ def resolve_size(value=None):
     return width, height
 
 
-def choose_layout(rng=None):
-    names = [name for name, _ in LAYOUT_WEIGHTS]
-    index = int((rng or random).random() * len(names))
-    return names[min(index, len(names) - 1)]
+def default_size(orientation="landscape"):
+    """The output size used when none is given, per orientation."""
+
+    if orientation not in SIZES:
+        raise ValueError(f"不明な向き: {orientation}（{', '.join(SIZES)}）")
+    return resolve_size(os.getenv(SIZE_ENV[orientation]) or SIZES[orientation])
+
+
+def find_layout(value):
+    """A layout name, its number (12) or a numeric string ("12") → its name."""
+
+    if isinstance(value, str) and value.strip().isdigit():
+        value = int(value.strip())
+    if isinstance(value, int) and not isinstance(value, bool):
+        spec = miq_layouts.by_number(value)
+        if spec is None:
+            raise ValueError(
+                f"構図番号 {value} はありません（miq.py --list-layouts で一覧）。"
+            )
+        return spec.name
+    if value not in REGISTRY:
+        raise ValueError(f"不明なレイアウト: {value}")
+    return value
+
+
+def choose_layout(rng=None, category=None, orientation=None):
+    """Uniform draw over every layout (or one category / orientation).
+
+    A category with no layout in the orientation falls back to the whole
+    orientation, so ``cute`` + portrait still draws something.
+    """
+
+    if category is not None and category not in miq_layouts.categories():
+        raise ValueError(
+            f"不明なカテゴリ: {category}（{', '.join(miq_layouts.categories())}）"
+        )
+    pool = miq_layouts.names(category, orientation) or miq_layouts.names(
+        None, orientation
+    )
+    if not pool:
+        raise ValueError(f"不明な向き: {orientation}")
+    index = int((rng or random).random() * len(pool))
+    return pool[min(index, len(pool) - 1)]
+
+
+def installed_families(layout):
+    """The layout's typefaces that are actually on disk (best match first)."""
+
+    keys = [k for k in REGISTRY[layout].fonts if FAMILIES[k].installed()]
+    return keys or [k for k, f in FAMILIES.items() if f.installed()]
+
+
+def choose_style(
+    layout="auto",
+    font_family="auto",
+    *,
+    category=None,
+    seed=None,
+    rng=None,
+    orientation=None,
+):
+    """Resolve ``auto`` choices to concrete ``(layout, font_family)`` names.
+
+    ``layout`` may also be a layout number. ``orientation`` narrows the draw.
+
+    The same seed always gives the same pair, so a bot can show the user which
+    style was drawn and re-render it later.
+    """
+
+    rng = rng or (random.Random(seed) if seed is not None else random)
+    if layout in (None, "", "auto"):
+        layout = choose_layout(rng, category, orientation)
+    layout = find_layout(layout)
+    if font_family in (None, "", "auto"):
+        choices = installed_families(layout)
+        if not choices:
+            raise ValueError(
+                "標準フォントがありません。python scripts/setup_fonts.py を実行してください。"
+            )
+        font_family = choices[min(int(rng.random() * len(choices)), len(choices) - 1)]
+    family(font_family)
+    return layout, font_family
 
 
 def wrap_line(para, font, max_width):
@@ -118,73 +209,36 @@ def resolve_align(value=None) -> str:
     return raw if raw in ALIGN_CHOICES else "right"
 
 
-@lru_cache(maxsize=4)
-def _background_layer(size: tuple[int, int]) -> Image.Image:
-    w, h = size
-    kx, ky = w / BASE_SIZE[0], h / BASE_SIZE[1]
-    bg = Image.new("RGB", size, (0, 1, 2))
-    # Subtle cyan glow; no numpy needed.
-    layer = Image.new("RGBA", size)
-    gd = ImageDraw.Draw(layer)
-    gd.ellipse((-320 * kx, -125 * ky, 1160 * kx, 1220 * ky), fill=(0, 70, 130, 26))
-    layer = layer.filter(ImageFilter.GaussianBlur(max(1, int(255 * min(kx, ky)))))
-    return Image.alpha_composite(bg.convert("RGBA"), layer)
+def _emoji_font(explicit):
+    path = find_emoji_font(explicit)
+    if (
+        not explicit
+        and not os.getenv("MIQ_EMOJI_FONT")
+        and (FONT_DIR / "NotoColorEmoji.ttf").is_file()
+    ):
+        path = str(FONT_DIR / "NotoColorEmoji.ttf")
+    return path
 
 
-def dark_background(size: tuple[int, int]) -> Image.Image:
-    """Kept for API compatibility with the original classic background."""
+def _open_image(source):
+    """A path, raw bytes, a binary stream or a PIL image → RGBA image."""
 
-    # The glow only depends on the canvas size; callers paint over their own copy.
-    return _background_layer(tuple(size)).copy()
-
-
-def text_region(width: int, height: int, has_credit: bool, align: str = "right"):
-    """本文を置ける領域 ``(left, top, right, bottom)`` を返す。
-
-    ``left`` は折り返しの左端。``center`` は上流と同じ広さを取り、``right`` は
-    アイコンの右側だけに取る（長い行でもアイコンに掛からない）。
-    """
-
-    kx, ky = width / BASE_SIZE[0], height / BASE_SIZE[1]
-    k = min(kx, ky)
-    left = round(TEXT_LEFT.get(align, TEXT_LEFT["right"]) * kx)
-    right = round(TEXT_RIGHT * kx)
-    top = round(150 * k)
-    bottom = (
-        (round(846 * ky) - round(80 * k)) if has_credit else (height - round(80 * k))
-    )
-
-    return left, top, right, bottom
+    if isinstance(source, Image.Image):
+        image = source
+        if getattr(image, "is_animated", False):
+            image.seek(0)
+        return ImageOps.exif_transpose(image).convert("RGBA")
+    if isinstance(source, (bytes, bytearray, memoryview)):
+        source = io.BytesIO(bytes(source))
+    with Image.open(source) as opened:
+        return ImageOps.exif_transpose(opened).convert("RGBA")
 
 
-def line_anchor(
-    width: int, left: int, right: int, widest: float, align: str = "right"
-) -> float:
-    """行の中心の x を決める。
-
-    ``center`` は画面中央から少し右（``CENTER_SHIFT``）。ただしアイコン側（``left``）と
-    右端（``right``）を越えない範囲で寄せるので、長い行でもアイコンに重ならない。
-    """
-
-    if align != "center":
-        return (left + right) / 2
-
-    # 画面中央から少しだけ右へ寄せた位置を狙う
-    target = width * (0.5 + CENTER_SHIFT)
-    low, high = left + widest / 2, right - widest / 2
-
-    if low > high:
-        return (left + right) / 2
-
-    return min(max(target, low), high)
-
-
-def render(
-    avatar: Path,
-    text: str,
-    output,
-    name: str = "",
-    handle: str = "",
+def compose(
+    avatar,
+    text,
+    name="",
+    handle="",
     font_file=None,
     bold_font_file=None,
     size=None,
@@ -196,112 +250,264 @@ def render(
     layout="auto",
     seed=None,
     attachment=False,
+    font_family="auto",
+    category=None,
+    mentions=None,
+    markup=True,
+    date=None,
+    fast=False,
+    orientation=None,
 ):
-    """Render offline. Fix layout (or seed) for reproducible output.
+    """Draw the quote and return ``(image, layout, font_family)``.
 
-    ``output`` is a path (``.png``/``.jpg``/``.webp`` by suffix) or a binary file
-    object, which receives PNG bytes. ``attachment=True`` keeps the source image's
-    aspect ratio. Text has no character-count or minimum-size limit.
+    ``fast=True`` skips the 2× supersampling of the designed layouts: about
+    twice as fast, with slightly coarser hairlines and small print.
+
+    ``orientation`` (landscape / portrait / square) narrows the automatic
+    draw; without it the orientation follows ``size``. A layout chosen by
+    name or number keeps its own orientation, and without an explicit
+    ``size`` it gets that orientation's default size.
     """
+
+    if markup:
+        # ASCII art is code-like: Discord emphasis/spoiler markers are part of
+        # the picture and must not be stripped. Detect it before cleaning.
+        try:
+            from miq_aa import detect
+
+            ascii_art = detect(text, bundled_fonts())
+        except (OSError, ValueError):
+            ascii_art = None
+        if ascii_art is None:
+            text = clean(text, mentions)
+        name = clean(name, mentions)
     if not text.strip():
         raise ValueError("本文が空です。")
-    target = resolve_size(size)
+    explicit = size not in (None, "")
+    if orientation is None:
+        orientation = (
+            miq_layouts.orientation_of(resolve_size(size))
+            if explicit or os.getenv("MIQ_SIZE")
+            else "landscape"
+        )
+    elif orientation not in SIZES:
+        raise ValueError(f"不明な向き: {orientation}（{', '.join(SIZES)}）")
     align = resolve_align(align)
-    bundled_fonts()
-    if layout == "auto":
-        layout = choose_layout(random.Random(seed) if seed is not None else None)
-    layout = ALIASES.get(layout, layout)
-    if layout not in LAYOUTS:
-        raise ValueError(f"不明なレイアウト: {layout}")
-    image = read_image(avatar, target)
-    emoji_path = find_emoji_font(emoji_font_file)
-    if (
-        not emoji_font_file
-        and not os.getenv("MIQ_EMOJI_FONT")
-        and (FONT_DIR / "NotoColorEmoji.ttf").is_file()
-    ):
-        emoji_path = str(FONT_DIR / "NotoColorEmoji.ttf")
+    body_file = font_file or os.getenv("MIQ_FONT")
+    style = dict(category=category, seed=seed, orientation=orientation)
+    if body_file:
+        chosen = custom_family(find_font(body_file))
+        layout, _ = choose_style(layout, "gothic", **style)
+    else:
+        layout, key = choose_style(layout, font_family, **style)
+        chosen = family(key)
+        if not chosen.installed():
+            raise ValueError(
+                f"書体 {chosen.label} がありません。python scripts/setup_fonts.py を実行してください。"
+            )
+    spec = REGISTRY[layout]
+    target = resolve_size(size) if explicit else default_size(spec.orientation)
+    image = _open_image(avatar)
+    images = EmojiImages(_emoji_font(emoji_font_file), custom_emojis)
     latin = italic_font_file or os.getenv("MIQ_ITALIC_FONT")
-    body = font_file or os.getenv("MIQ_FONT")
-    ctx = Ctx(
+    latin = find_italic_font(latin) if latin else None
+    # Native layouts paint at the output size; the others draw at up to 2×
+    # (capped at 1920 wide) and downsample, which keeps small outputs crisp.
+    design = spec.design[0]
+    factor = 1 if spec.native or fast else min(2.0, max(1.0, design / target[0]))
+    if factor > 1.5 and target[0] * 2 <= max(design, 1280):
+        factor = 2
+    work = (round(target[0] * factor), round(target[1] * factor))
+    scene = Scene(
         image,
         text,
         name,
         handle,
-        target,
-        EmojiImages(emoji_path, custom_emojis),
+        work,
+        chosen,
+        images,
         attachment,
-        align,
-        find_font(body) if body else None,
-        find_font(bold_font_file) if bold_font_file else None,
-        find_italic_font(latin) if latin else None,
+        date,
+        name_file=find_font(bold_font_file) if bold_font_file else None,
+        latin_file=latin,
+        design=spec.design,
+        seed=seed,
     )
-    save(LAYOUTS[layout](ctx), output)
+    scene.align = align
+    canvas = spec.draw(scene)
+    if canvas.size != target:
+        if canvas.size == (target[0] * 2, target[1] * 2):
+            # Exact 2× supersampling: a box reduction is the ideal filter. The
+            # canvas is opaque, so reducing RGB skips Pillow's premultiplied
+            # RGBA round trip.
+            canvas = canvas.convert("RGB").reduce(2)
+        else:
+            canvas = canvas.resize(target, Image.Resampling.LANCZOS)
+    return canvas, layout, chosen.key
 
 
-def save(canvas, output):
-    if not isinstance(output, (str, os.PathLike)):
-        output.write(encode_png(canvas))
+def render(
+    avatar: Path,
+    text: str,
+    output: Path,
+    name: str = "",
+    handle: str = "",
+    font_file=None,
+    bold_font_file=None,
+    size=None,
+    emoji_font_file=None,
+    italic_font_file=None,
+    custom_emojis=None,
+    align=None,
+    **options,
+):
+    """Render offline. Fix layout and font_family (or seed) for reproducible output.
+
+    ``avatar`` may be a path, bytes, a binary stream or a PIL image; ``output``
+    a path or a writable binary stream. ``attachment=True`` keeps the source
+    image's aspect ratio instead of cropping it to a square. Text has no
+    character-count or minimum-size limit.
+    """
+    canvas, _, _ = compose(
+        avatar,
+        text,
+        name,
+        handle,
+        font_file,
+        bold_font_file,
+        size,
+        emoji_font_file,
+        italic_font_file,
+        custom_emojis,
+        align,
+        **options,
+    )
+    _save(canvas, output)
+
+
+def render_bytes(avatar, text, name="", handle="", **options):
+    """PNG bytes plus the style that was drawn: ``(png, layout, font_family)``.
+
+    Handy for Discord bots: ``discord.File(io.BytesIO(png), "quote.png")``.
+    """
+
+    canvas, layout, font_family = compose(avatar, text, name, handle, **options)
+    buffer = io.BytesIO()
+    _save(canvas, buffer)
+    return buffer.getvalue(), layout, font_family
+
+
+def _save(canvas, output):
+    # Same size as Pillow's level 3 at about a third of the time.
+    png = encode_png(canvas, PNG_COMPRESSION)
+    if hasattr(output, "write"):
+        output.write(png)
         return
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
-    suffix = output.suffix.lower()
-    if suffix in (".jpg", ".jpeg"):
-        canvas.convert("RGB").save(output, "JPEG", quality=93, subsampling=0)
-    elif suffix == ".webp":
-        canvas.convert("RGB").save(output, "WEBP", quality=92, method=2)
-    else:
-        output.write_bytes(encode_png(canvas))
+    output.write_bytes(png)
 
 
-def warmup(size=None):
-    """Load fonts, the Japanese dictionary and per-size caches before the first
-    request (call once at bot start-up). Returns the warmed layout names."""
+def warmup(full=True):
+    """Load everything a first request would otherwise wait for (call at bot start).
+
+    Besides the dictionary, fonts and emoji face, ``full`` draws one small
+    quote with every layout: that imports the Pango/Cairo bindings (about a
+    second of cffi parsing), reads each typeface's character map and fills the
+    mask caches, so even the first real request runs at full speed.
+    """
 
     from miq_words import tokenizer
 
     tokenizer()
-    avatar = io.BytesIO()
-    Image.new("RGBA", (64, 64), (90, 120, 160, 255)).save(avatar, "PNG")
-    for name in LAYOUTS:
-        avatar.seek(0)
-        render(avatar, "準備 Warm up 👍", io.BytesIO(), "名前", "name", size=size, layout=name)
-    return list(LAYOUTS)
+    for key, item in FAMILIES.items():
+        if item.installed():
+            font_at(item.path, 64, item.body)
+    path = _emoji_font(None)
+    if path:
+        EmojiImages(path).get("😀")
+    if not full:
+        return
+    import miq_complex  # noqa: F401
+    import miq_vertical  # noqa: F401
+
+    for item in FAMILIES.values():
+        if item.installed():
+            coverage(str(item.path))
+    sample = Image.new("RGBA", (64, 64), (90, 120, 160, 255))
+    for name in REGISTRY:
+        try:
+            compose(sample, "あA😀", "n", "h", layout=name, seed=0, fast=True)
+        except (OSError, ValueError):
+            pass
 
 
 def main():
     parser = argparse.ArgumentParser(description="画像と本文から引用PNGを作成します。")
-    parser.add_argument("--avatar", "--image", dest="avatar", required=True, type=Path)
-    source = parser.add_mutually_exclusive_group(required=True)
+    parser.add_argument("--avatar", "--image", dest="avatar", type=Path)
+    source = parser.add_mutually_exclusive_group()
     source.add_argument("--text", "--quote", dest="text")
     source.add_argument("--text-file", type=Path)
     parser.add_argument("--name", default="")
     parser.add_argument("--handle", default="")
     parser.add_argument("--output", "-o", type=Path, default=Path("quote.png"))
-    parser.add_argument("--font")
-    parser.add_argument("--bold-font")
+    parser.add_argument("--font", help="全テキストに使うフォントファイル")
+    parser.add_argument("--bold-font", help="表示名だけに使うフォントファイル")
     parser.add_argument("--size")
     parser.add_argument("--align", choices=ALIGN_CHOICES)
     parser.add_argument("--emoji-font")
     parser.add_argument("--italic-font")
     parser.add_argument(
-        "--layout", choices=["auto", *LAYOUTS, *ALIASES], default="auto"
+        "--layout", default="auto", help="auto、構図名または番号（--list-layouts）"
+    )
+    parser.add_argument(
+        "--orientation",
+        choices=miq_layouts.ORIENTATIONS,
+        help="auto抽選の向き（既定は --size から判断、なければ横）",
+    )
+    parser.add_argument(
+        "--category", choices=miq_layouts.categories(), help="auto抽選の系統を絞る"
+    )
+    parser.add_argument(
+        "--font-family", choices=["auto", *FAMILIES], default="auto", help="書体"
     )
     parser.add_argument("--seed", type=int)
     parser.add_argument(
         "--attachment", action="store_true", help="画像を正方形に切らず縦横比を維持する"
     )
+    parser.add_argument(
+        "--raw",
+        action="store_true",
+        help="Discord記法（**太字** や <@id>）を整形しない",
+    )
+    parser.add_argument(
+        "--fast",
+        action="store_true",
+        help="2倍描画を省いて約2倍速にする（細部はやや粗い）",
+    )
+    parser.add_argument(
+        "--list-layouts", action="store_true", help="構図と書体の一覧を表示して終了"
+    )
     args = parser.parse_args()
+    if args.list_layouts:
+        for name, spec in sorted(REGISTRY.items(), key=lambda kv: kv[1].number):
+            fonts = ", ".join(spec.fonts)
+            print(
+                f"{spec.number:3d} {name:13} {spec.orientation:9} {spec.category:7}"
+                f" {spec.label}  [{fonts}]"
+            )
+        return
+    if args.avatar is None or (args.text is None and args.text_file is None):
+        parser.error("--avatar と --text（または --text-file）が必要です。")
     try:
         text = (
             args.text_file.read_text(encoding="utf-8-sig")
             if args.text_file
             else args.text
         )
-        render(
+        canvas, layout, font_family = compose(
             args.avatar,
             text,
-            args.output,
             args.name,
             args.handle,
             args.font,
@@ -314,10 +520,16 @@ def main():
             layout=args.layout,
             seed=args.seed,
             attachment=args.attachment,
+            font_family=args.font_family,
+            category=args.category,
+            markup=not args.raw,
+            fast=args.fast,
+            orientation=args.orientation,
         )
+        _save(canvas, args.output)
     except (ValueError, OSError) as exc:
         parser.exit(2, f"エラー: {exc}\n")
-    print(f"Created: {args.output}")
+    print(f"Created: {args.output} ({layout} / {font_family})")
 
 
 if __name__ == "__main__":

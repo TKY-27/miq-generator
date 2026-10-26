@@ -15,7 +15,7 @@ import re
 import unicodedata
 from functools import lru_cache
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageColor, ImageDraw
 
 from miq_fonts import bundled_fonts, coverage, font_at
 
@@ -149,6 +149,8 @@ def draw(canvas, lines, mode, fonts, box, fill, maximum, align="center", valign=
         mask = mask.resize(size, Image.Resampling.LANCZOS, reducing_gap=2.0)
     x = {"left": left, "right": right - size[0]}.get(align, (left + right - size[0]) / 2)
     y = {"top": top, "bottom": bottom - size[1]}.get(valign, (top + bottom - size[1]) / 2)
+    if isinstance(fill, str):
+        fill = ImageColor.getrgb(fill)
     color = tuple(fill[:3]) if canvas.mode == "RGB" else tuple(fill[:3]) + (255,)
     canvas.paste(color, (round(x), round(y)), mask)
     return (x, y, x + size[0], y + size[1])

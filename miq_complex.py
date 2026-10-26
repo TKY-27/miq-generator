@@ -12,7 +12,6 @@ import pangocffi as pango
 from PIL import Image, ImageColor, ImageDraw
 
 from miq_fonts import font_at
-from miq_images import put
 from miq_words import CUSTOM, GRAPHEME, JAPANESE, runs, units
 
 _FONTCONFIG_LOCK = threading.Lock()
@@ -45,6 +44,28 @@ def to_surface(image):
     return cairo.ImageSurface.create_for_data(
         data, cairo.FORMAT_ARGB32, image.width, image.height
     ), data
+
+
+def protect_words(attrs, text):
+    """Forbid breaks inside each Japanese phrase from ``units``.
+
+    Pango drops a break opportunity only when the characters on both sides lie
+    in a no-break range, so each range must start at the phrase's first byte.
+    """
+
+    offset = 0
+    for paragraph in text.split("\n"):
+        for word in units(paragraph):
+            end = offset + len(word.encode())
+            if len(GRAPHEME.findall(word)) > 1:
+                attr = pango.Attribute.from_pointer(
+                    pango.pango.pango_attr_allow_breaks_new(False)
+                )
+                attr.start_index = offset
+                attr.end_index = end
+                attrs.insert(attr)
+            offset = end
+        offset += 1
 
 
 class BitmapTiles:
@@ -116,7 +137,7 @@ class BitmapTiles:
             self.surface.get_stride(),
             1,
         )
-        put(self.canvas, premultiplied.convert("RGBA"))
+        self.canvas.alpha_composite(premultiplied.convert("RGBA"))
 
     def __exit__(self, *exc):
         if exc[0] is None:
@@ -183,20 +204,7 @@ class ComplexText:
         processed = "".join(result)
         # Pango supplies script-specific breaks; protect Japanese phrases as well.
         if JAPANESE.search(processed):
-            offset = 0
-            for paragraph in processed.split("\n"):
-                for word in units(paragraph):
-                    end = offset + len(word.encode())
-                    first = next(GRAPHEME.finditer(word), None)
-                    if first:
-                        attr = pango.Attribute.from_pointer(
-                            pango.pango.pango_attr_allow_breaks_new(False)
-                        )
-                        attr.start_index = offset + len(first.group().encode())
-                        attr.end_index = end
-                        attrs.insert(attr)
-                    offset = end
-                offset += 1
+            protect_words(attrs, processed)
         layout.text = processed
         layout.attributes = attrs
         if width is not None:
@@ -245,7 +253,7 @@ class ComplexText:
             rows.append("".join(row).rstrip("\n"))
         return rows
 
-    def draw(self, canvas, text, xy, fill, scale=1):
+    def draw(self, canvas, text, xy, fill, scale=1, *, emoji=True):
         layout, images = self.layout(text)
         baseline = pango.units_to_double(layout.get_baseline())
         with BitmapTiles(canvas) as tiles:
@@ -260,7 +268,7 @@ class ComplexText:
             pangocairo.show_layout(ctx, layout)
             ctx.restore()
             for offset, image, _, _ in images:
-                if image is None:
+                if image is None or not emoji:
                     continue
                 rect = pango.Rectangle()
                 pango.pango.pango_layout_index_to_pos(

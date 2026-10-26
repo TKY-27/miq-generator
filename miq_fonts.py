@@ -1,10 +1,9 @@
 """Font discovery, glyph coverage and real font weights."""
 
-import hashlib
 import os
 import shutil
 import subprocess
-from array import array
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
@@ -14,7 +13,7 @@ from PIL import ImageFont
 FONT_DIR = Path(__file__).resolve().parent / "fonts"
 
 
-@lru_cache(maxsize=384)
+@lru_cache(maxsize=256)
 def _font(path: str, px: int, weight):
     """Reuse FreeType handles: the binary search asks for the same sizes again."""
 
@@ -40,37 +39,10 @@ def font_at(path, px, weight=None):
     return _font(str(path), max(1, round(px)), weight)
 
 
-@lru_cache(maxsize=32)
+@lru_cache(maxsize=12)
 def coverage(path):
-    """Codepoints the face can draw.
+    """Codepoints the face can draw; synthesised glyph names keep cmap parsing cheap."""
 
-    Parsing a CJK cmap takes tens of milliseconds, so the result is also kept on
-    disk (keyed by path, size and mtime) for short-lived CLI processes.
-    """
-
-    stat = os.stat(path)
-    key = hashlib.blake2s(
-        f"{os.path.abspath(path)}\0{stat.st_size}\0{stat.st_mtime_ns}".encode(),
-        digest_size=10,
-    ).hexdigest()
-    cached = FONT_DIR / ".cache" / f"{key}.cmap"
-    try:
-        return frozenset(array("I", cached.read_bytes()))
-    except (OSError, ValueError):
-        pass
-    result = _parse_coverage(path)
-    try:
-        cached.parent.mkdir(exist_ok=True)
-        temporary = cached.with_suffix(f".{os.getpid()}.tmp")
-        temporary.write_bytes(array("I", sorted(result)).tobytes())
-        temporary.replace(cached)
-    except OSError:
-        pass  # A read-only install still works, just without the disk cache.
-    return result
-
-
-def _parse_coverage(path):
-    # Synthesised glyph names keep cmap parsing cheap.
     with TTFont(str(path), fontNumber=0, lazy=True) as font:
         try:
             count = font["maxp"].numGlyphs
@@ -80,32 +52,40 @@ def _parse_coverage(path):
         return frozenset(font.getBestCmap() or {})
 
 
-# Roles used by the layouts; files are fetched by scripts/setup_fonts.py.
+@dataclass(frozen=True)
+class FontFamily:
+    """One typeface used for every line of an image (weights may differ)."""
+
+    key: str
+    label: str
+    file: str
+    body: int | None = None
+    name: int | None = None
+    handle: int | None = None
+    # Relative size: display faces look larger than text faces at the same px.
+    scale: float = 1.0
+
+    @property
+    def path(self):
+        return str(FONT_DIR / self.file)
+
+    def installed(self):
+        return (FONT_DIR / self.file).is_file()
+
+
+# Faces that only the ASCII-art path uses (AA is not a layout typeface).
 FONT_FILES = {
-    "mincho": "ShipporiMinchoB1-ExtraBold.ttf",
-    "gothic": "ZenKakuGothicNew-Bold.ttf",
-    "gothic-medium": "ZenKakuGothicNew-Medium.ttf",
-    "display": "DelaGothicOne-Regular.ttf",
-    "mono-jp": "MPLUS1Code.ttf",
-    "mono": "JetBrainsMono.ttf",
-    "sans": "Inter.ttf",
-    "italic": "CormorantGaramond-Italic.ttf",
-    "serif": "InstrumentSerif-Regular.ttf",
-    "serif-italic": "InstrumentSerif-Italic.ttf",
-    "condensed": "Anton-Regular.ttf",
-    "brush": "YujiSyuku-Regular.ttf",
-    "blackletter": "UnifrakturMaguntia-Book.ttf",
     "aa": "Saitamaar-Regular.ttf",
-    "fallback": "NotoSansJP.ttf",
+    "mono": "JetBrainsMono.ttf",
 }
 
 
 @lru_cache(maxsize=1)
 def bundled_fonts():
-    """Check every bundled face once per process and return role -> path."""
+    """Role -> path for the faces the AA renderer needs (checked once)."""
 
     paths = {role: FONT_DIR / name for role, name in FONT_FILES.items()}
-    missing = sorted({p.name for p in paths.values() if not p.is_file()})
+    missing = sorted({path.name for path in paths.values() if not path.is_file()})
     if missing:
         raise ValueError(
             "標準フォントがありません: "
@@ -113,6 +93,35 @@ def bundled_fonts():
             + "。python scripts/setup_fonts.py を実行してください。"
         )
     return {role: str(path) for role, path in paths.items()}
+
+
+FAMILIES = {
+    family.key: family
+    for family in (
+        FontFamily("gothic", "Noto Sans JP", "NotoSansJP.ttf", 800, 700, 500),
+        FontFamily("mincho", "Noto Serif JP", "NotoSerifJP.ttf", 800, 700, 500),
+        FontFamily("maru", "Zen Maru Gothic", "ZenMaruGothic.ttf"),
+        FontFamily("shippori", "Shippori Mincho B1", "ShipporiMinchoB1.ttf"),
+        FontFamily("dela", "Dela Gothic One", "DelaGothicOne.ttf", scale=0.94),
+        FontFamily("dot", "DotGothic16", "DotGothic16.ttf"),
+        FontFamily("code", "M PLUS 1 Code", "MPLUS1Code.ttf", 700, 600, 400),
+        FontFamily("klee", "Klee One", "KleeOne.ttf"),
+        FontFamily("rocknroll", "RocknRoll One", "RocknRollOne.ttf"),
+    )
+}
+
+
+def family(key):
+    try:
+        return FAMILIES[key]
+    except KeyError:
+        raise ValueError(f"不明な書体: {key}（{', '.join(FAMILIES)}）") from None
+
+
+def custom_family(path):
+    """A user-supplied font file, treated as a one-weight family."""
+
+    return FontFamily("custom", Path(path).stem, str(Path(path).resolve()))
 
 
 EMOJI_FONT_CHOICES = [

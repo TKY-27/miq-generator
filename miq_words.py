@@ -11,11 +11,17 @@ GRAPHEME = regex.compile(r"<a?:[A-Za-z0-9_]+:[0-9]+>|\X")
 LATIN = regex.compile(r"[\p{Latin}\p{N}][\p{Latin}\p{M}\p{N}._/@:#’\x27+\-]*")
 JAPANESE = regex.compile(r"[\p{Han}\p{Hiragana}\p{Katakana}ー]+")
 KANA = regex.compile(r"[\p{Hiragana}\p{Katakana}]")
-EDITORIAL_LATIN = regex.compile(r"[\p{Latin}\p{N}\p{M}\x20-\x7e]+")
 NO_START = set(
     "、。，．：；？！゛゜ヽヾゝゞ々ー）］｝〕〉》」』】〙〗〟’”｠»・ぁぃぅぇぉっゃゅょァィゥェォッャュョ"
+    # JIS X 4051 additions: small kana, iteration marks, hyphens, ASCII closers
+    "ゎゕゖヮヵヶㇰㇱㇲㇳㇴㇵㇶㇷㇸㇹㇺㇻㇼㇽㇾㇿ〻‐゠–〜～‼⁇⁈⁉)]}!?,.:;%"
 )
-NO_END = set("（［｛〔〈《「『【〘〖〝‘“｟«")
+NO_END = set("（［｛〔〈《「『【〘〖〝‘“｟«([{")
+# Characters after which a line may break even without a dictionary boundary.
+# (Small kana are in NO_START but must not split じゃあ / きゅう.)
+BREAK_AFTER = set("、。，．：；？！)]}!?,.:;%»”）］｝〕〉》」』】〙〗〟’”｠")
+# Leaders and dashes are written in pairs and never split (分離禁止).
+INSEPARABLE = set("…‥—―")
 
 
 @lru_cache(maxsize=1)
@@ -25,7 +31,6 @@ def tokenizer():
     return Tokenizer()
 
 
-@lru_cache(maxsize=4096)
 def is_emoji(text):
     # Text presentation selectors explicitly request an ordinary glyph.
     return not text.endswith("\ufe0e") and emoji.is_emoji(text)
@@ -33,8 +38,14 @@ def is_emoji(text):
 
 def units(text):
     """Keep words, suffixes, punctuation and extended graphemes together."""
+    return list(_units(text))
+
+
+@lru_cache(maxsize=1024)
+def _units(text):
+    """Cached: the size search re-wraps the same paragraphs many times."""
     if not text:
-        return []
+        return ()
     boundaries = {0, len(text)}
     japanese = bool(KANA.search(text))
     # Only Japanese spans go through the Japanese dictionary.
@@ -62,6 +73,10 @@ def units(text):
     legal = {len(text)}
     for match in GRAPHEME.finditer(text):
         legal.add(match.start())
+        # A break is allowed after punctuation that may not start a line
+        # (。 followed by Latin has no dictionary boundary of its own).
+        if match.start() and text[match.start() - 1] in BREAK_AFTER:
+            boundaries.add(match.start())
         if is_emoji(match.group()) or CUSTOM.fullmatch(match.group()):
             boundaries.update((match.start(), match.end()))
     words = iter(LATIN.finditer(text))
@@ -79,8 +94,10 @@ def units(text):
             continue
         if text[i] in NO_START or text[i - 1] in NO_END:
             continue
+        if text[i] in INSEPARABLE and text[i] == text[i - 1]:
+            continue
         # Attach Japanese particles after a Latin word or a number.
-        if regex.match(r"[\p{Latin}\p{N}]", text[i - 1]) and regex.match(
+        if regex.match(r"[\p{Latin}\p{N}%％]", text[i - 1]) and regex.match(
             r"\p{Hiragana}", text[i]
         ):
             continue
@@ -93,22 +110,25 @@ def units(text):
             continue
         accepted.append(i)
     accepted.append(len(text))
-    return [text[a:b] for a, b in pairwise(accepted)]
+    return tuple(text[a:b] for a, b in pairwise(accepted))
 
 
 def runs(text, editorial=False):
     """Keep classic Latin styling; never split a grapheme or custom emoji.
 
-    Measurement asks for the same rows many times, so results are memoised.
+    Fitting measures the same rows many times, so short texts are memoised.
     """
-    if len(text) > 512:
-        return tuple(_runs(text, editorial))
-    return _cached_runs(text, editorial)
+    if len(text) <= 1024:
+        return _cached_runs(text, bool(editorial))
+    return tuple(_runs(text, editorial))
 
 
-@lru_cache(maxsize=8192)
+@lru_cache(maxsize=2048)
 def _cached_runs(text, editorial):
     return tuple(_runs(text, editorial))
+
+
+EDITORIAL_LATIN = regex.compile(r"[\p{Latin}\p{N}\p{M}\x20-\x7e]+")
 
 
 def _runs(text, editorial=False):
