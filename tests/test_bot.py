@@ -2,7 +2,9 @@
 
 import asyncio
 import io
+import struct
 import sys
+import zlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -182,6 +184,15 @@ def png_bytes(size, color):
     return buffer.getvalue()
 
 
+def bomb_bytes(size):
+    """A small PNG file whose header claims an enormous canvas."""
+    raw = bytearray(png_bytes((16, 16), "red"))
+    start = raw.find(b"IHDR")
+    struct.pack_into(">II", raw, start + 4, *size)
+    struct.pack_into(">I", raw, start + 17, zlib.crc32(bytes(raw[start : start + 17])))
+    return bytes(raw)
+
+
 def gif_bytes():
     frames = [Image.new("P", (60, 40), i) for i in (1, 2)]
     buffer = io.BytesIO()
@@ -310,6 +321,13 @@ def test_download_rejects_untrusted_hosts_redirects_and_oversize_stream():
 def test_picture_skips_image_with_too_many_pixels():
     large = png_bytes((4000, 3100), "red")
     part = jobs.Part(b"", "text", "name", "handle", [(large, False)])
+    image, attachment = jobs.picture(part)
+    assert image.size == (256, 256)
+    assert not attachment
+
+
+def test_picture_ignores_decompression_bomb():
+    part = jobs.Part(b"", "text", "name", "handle", [(bomb_bytes((30000, 30000)), False)])
     image, attachment = jobs.picture(part)
     assert image.size == (256, 256)
     assert not attachment

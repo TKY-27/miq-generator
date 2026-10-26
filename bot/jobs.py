@@ -56,7 +56,8 @@ def picture(part):
                 if getattr(opened, "is_animated", False):
                     opened.seek(0)  # GIF / APNG / animated WebP: first frame
                 image = opened.convert("RGBA")
-        except (OSError, ValueError):
+        except (OSError, ValueError, Image.DecompressionBombError):
+            # A tiny file can still declare a canvas big enough to exhaust memory.
             continue
         pictures.append(spoiler(image) if hidden else image)
     if pictures:
