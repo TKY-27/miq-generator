@@ -37,14 +37,38 @@ def luminance(color):
 @lru_cache(maxsize=64)
 def _shape_mask(size, radius, kind):
     w, h = size
+    if kind != "ellipse":
+        return _rounded_mask(w, h, radius)
     big = Image.new("L", (w * SUPERSAMPLE, h * SUPERSAMPLE))
     draw = ImageDraw.Draw(big)
     box = (0, 0, big.width - 1, big.height - 1)
-    if kind == "ellipse":
-        draw.ellipse(box, fill=255)
-    else:
-        draw.rounded_rectangle(box, radius * SUPERSAMPLE, fill=255)
+    draw.ellipse(box, fill=255)
     return big.resize(size, Image.Resampling.BOX)
+
+
+def _rounded_mask(w, h, radius):
+    """Only the four corners need supersampling; the rest is solid.
+
+    Each corner tile is drawn from the same full-size shape (translated), so
+    the result is identical to supersampling the whole rectangle.
+    """
+
+    n = SUPERSAMPLE
+    cw, ch = min(radius + 2, -(-w // 2)), min(radius + 2, -(-h // 2))
+    mask = Image.new("L", (w, h), 255)
+    if radius <= 0:
+        return mask
+    box = (0, 0, w * n - 1, h * n - 1)
+    for x in {0, w - cw}:
+        for y in {0, h - ch}:
+            tile = Image.new("L", (cw * n, ch * n))
+            ImageDraw.Draw(tile).rounded_rectangle(
+                (box[0] - x * n, box[1] - y * n, box[2] - x * n, box[3] - y * n),
+                radius * n,
+                fill=255,
+            )
+            mask.paste(tile.resize((cw, ch), Image.Resampling.BOX), (x, y))
+    return mask
 
 
 def round_mask(size, radius):

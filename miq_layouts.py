@@ -394,24 +394,25 @@ class Scene:
         canvas.alpha_composite(fx.colored(mask, color), (l, t))
 
     def hline(self, canvas, x0, x1, y, color, width=2):
-        layer = Image.new("RGBA", self.size, (0, 0, 0, 0))
         stroke = max(1, round(self.S(width)))
         top = round(self.Y(y) - stroke / 2)
-        ImageDraw.Draw(layer).rectangle(
-            (round(self.X(x0)), top, round(self.X(x1)) - 1, top + stroke - 1),
-            fill=color,
-        )
-        canvas.alpha_composite(layer)
+        _bar(canvas, (round(self.X(x0)), top, round(self.X(x1)), top + stroke), color)
 
     def vline(self, canvas, x, y0, y1, color, width=2):
-        layer = Image.new("RGBA", self.size, (0, 0, 0, 0))
         stroke = max(1, round(self.S(width)))
         left = round(self.X(x) - stroke / 2)
-        ImageDraw.Draw(layer).rectangle(
-            (left, round(self.Y(y0)), left + stroke - 1, round(self.Y(y1)) - 1),
-            fill=color,
-        )
-        canvas.alpha_composite(layer)
+        _bar(canvas, (left, round(self.Y(y0)), left + stroke, round(self.Y(y1))), color)
+
+
+def _bar(canvas, box, color):
+    """Blend a solid rectangle (end-exclusive box) over just the pixels it covers."""
+
+    l, t = max(0, box[0]), max(0, box[1])
+    r, b = min(canvas.width, box[2]), min(canvas.height, box[3])
+    if r > l and b > t:
+        color = fx.rgb(color) if isinstance(color, str) else tuple(color)
+        color = color if len(color) == 4 else (*color, 255)
+        canvas.alpha_composite(Image.new("RGBA", (r - l, b - t), color), (l, t))
 
 
 def fill(size, color):

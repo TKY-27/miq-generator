@@ -114,15 +114,29 @@ def _units(text):
 
 
 def runs(text, editorial=False):
-    """Keep classic Latin styling; never split a grapheme or custom emoji."""
+    """Keep classic Latin styling; never split a grapheme or custom emoji.
+
+    Fitting measures the same rows many times, so short texts are memoised.
+    """
+    if len(text) <= 1024:
+        return _cached_runs(text, bool(editorial))
+    return tuple(_runs(text, editorial))
+
+
+@lru_cache(maxsize=2048)
+def _cached_runs(text, editorial):
+    return tuple(_runs(text, editorial))
+
+
+EDITORIAL_LATIN = regex.compile(r"[\p{Latin}\p{N}\p{M}\x20-\x7e]+")
+
+
+def _runs(text, editorial=False):
     plain = []
 
     def flush():
         chunk = "".join(plain)
-        if editorial:
-            pattern = regex.compile(r"[\p{Latin}\p{N}\p{M}\x20-\x7e]+")
-        else:
-            pattern = LATIN
+        pattern = EDITORIAL_LATIN if editorial else LATIN
         start = 0
         for match in pattern.finditer(chunk):
             if match.start() > start:

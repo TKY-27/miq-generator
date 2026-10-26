@@ -26,6 +26,7 @@ from miq_fonts import (
     find_italic_font,
     font_at,
 )
+from miq_images import encode_png
 from miq_layouts import REGISTRY, Scene
 from miq_text import EmojiImages, MixedFont, fit, wrap_words
 from miq_words import units
@@ -267,8 +268,10 @@ def compose(
     canvas = spec.draw(scene)
     if canvas.size != target:
         if canvas.size == (target[0] * 2, target[1] * 2):
-            # Exact 2× supersampling: a box reduction is the ideal filter.
-            canvas = canvas.reduce(2)
+            # Exact 2× supersampling: a box reduction is the ideal filter. The
+            # canvas is opaque, so reducing RGB skips Pillow's premultiplied
+            # RGBA round trip.
+            canvas = canvas.convert("RGB").reduce(2)
         else:
             canvas = canvas.resize(target, Image.Resampling.LANCZOS)
     return canvas, layout, chosen.key
@@ -326,13 +329,14 @@ def render_bytes(avatar, text, name="", handle="", **options):
 
 
 def _save(canvas, output):
-    image = canvas.convert("RGB")
+    # Same size as Pillow's level 3 at about a third of the time.
+    png = encode_png(canvas, PNG_COMPRESSION)
     if hasattr(output, "write"):
-        image.save(output, format="PNG", compress_level=PNG_COMPRESSION)
+        output.write(png)
         return
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
-    image.save(output, format="PNG", compress_level=PNG_COMPRESSION)
+    output.write_bytes(png)
 
 
 def warmup():
