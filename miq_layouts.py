@@ -21,6 +21,13 @@ from miq_text import MixedFont, credit, fit, paint
 from miq_words import runs
 
 DESIGN = (1920, 1080)
+# Design space of each orientation; layouts write coordinates in these units.
+DESIGNS = {
+    "landscape": DESIGN,
+    "portrait": (1080, 1920),
+    "square": (1080, 1080),
+}
+ORIENTATIONS = tuple(DESIGNS)
 
 
 @dataclass(frozen=True)
@@ -32,25 +39,55 @@ class Layout:
     draw: object = field(repr=False, compare=False)
     # Native layouts paint at the output size; the others are supersampled.
     native: bool = False
+    # Users ask for a layout by this number (miq12), so it never changes.
+    number: int = 0
+    orientation: str = "landscape"
+
+    @property
+    def design(self):
+        return DESIGNS[self.orientation]
 
 
 REGISTRY: dict[str, Layout] = {}
 
 
-def layout(name, label, category, fonts, *, native=False):
+def layout(name, label, category, fonts, *, number, native=False, orientation="landscape"):
+    if orientation not in DESIGNS:
+        raise ValueError(f"不明な向き: {orientation}")
+
     def register(function):
-        REGISTRY[name] = Layout(name, label, category, tuple(fonts), function, native)
+        taken = by_number(number)
+        if taken is not None and taken.name != name:
+            raise ValueError(f"構図番号 {number} は {taken.name} が使用中です。")
+        REGISTRY[name] = Layout(
+            name, label, category, tuple(fonts), function, native, number, orientation
+        )
         return function
 
     return register
 
 
-def names(category=None):
-    return [n for n, item in REGISTRY.items() if category in (None, item.category)]
+def by_number(number):
+    return next((item for item in REGISTRY.values() if item.number == number), None)
+
+
+def names(category=None, orientation=None):
+    return [
+        n
+        for n, item in REGISTRY.items()
+        if category in (None, item.category) and orientation in (None, item.orientation)
+    ]
 
 
 def categories():
     return sorted({item.category for item in REGISTRY.values()})
+
+
+def orientation_of(size):
+    """Classify an output size: wider than 6:5 is landscape, taller than 5:6 portrait."""
+
+    ratio = size[0] / size[1]
+    return "landscape" if ratio > 1.2 else "portrait" if ratio < 1 / 1.2 else "square"
 
 
 class Scene:
@@ -71,6 +108,8 @@ class Scene:
         name_file=None,
         latin_file=None,
         classic=False,
+        design=DESIGN,
+        seed=None,
     ):
         self.image = image
         self.text = text
@@ -78,7 +117,9 @@ class Scene:
         self.handle = handle.strip().lstrip("@")
         self.size = size
         self.w, self.h = size
-        self.kx, self.ky = self.w / DESIGN[0], self.h / DESIGN[1]
+        self.design = design
+        self.seed = seed
+        self.kx, self.ky = self.w / design[0], self.h / design[1]
         self.k = min(self.kx, self.ky)
         self.family = family
         self.images = images
@@ -421,3 +462,4 @@ def fill(size, color):
 
 # Importing the modules registers their layouts.
 import miq_designs  # noqa: E402,F401
+import miq_portrait  # noqa: E402,F401

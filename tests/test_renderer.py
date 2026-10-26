@@ -1,3 +1,4 @@
+import io
 import random
 import subprocess
 import sys
@@ -558,4 +559,43 @@ def test_cli_lists_layouts():
     )
     lines = result.stdout.strip().splitlines()
     assert len(lines) == len(miq.LAYOUTS)
-    assert lines[0].startswith("classic")
+    assert lines[0].split()[:2] == ["1", "classic"]
+
+
+# Users type these numbers (miq12); they must never move.
+NUMBERS = {
+    1: "classic", 2: "mirrored", 3: "magazine", 4: "literary", 5: "noir",
+    6: "cinema", 7: "neon", 8: "glitch", 9: "terminal", 10: "swiss",
+    11: "brutal", 12: "duotone", 13: "aurora", 14: "blueprint", 15: "manga",
+    16: "tategaki", 17: "luxe", 18: "newspaper", 19: "ticket", 20: "nowplaying",
+    21: "diagonal", 22: "gallery", 23: "kawaii", 24: "chat", 25: "notebook",
+    26: "pixel", 27: "tcg",
+}
+
+
+def test_layout_numbers_are_stable_and_unique():
+    numbers = [spec.number for spec in miq.REGISTRY.values()]
+    assert len(set(numbers)) == len(numbers) and min(numbers) == 1
+    for number, name in NUMBERS.items():
+        assert miq.REGISTRY[name].number == number
+        assert miq.find_layout(number) == name == miq.find_layout(str(number))
+    with pytest.raises(ValueError):
+        miq.find_layout(9999)
+
+
+def test_orientation_draws_and_default_sizes():
+    for orientation, size in (("portrait", (540, 960)), ("square", (640, 640))):
+        for seed in range(6):
+            png, layout, _ = miq.render_bytes(
+                AVATAR, "縦の引用", "名前", orientation=orientation, seed=seed
+            )
+            assert miq.REGISTRY[layout].orientation == orientation
+            with Image.open(io.BytesIO(png)) as image:
+                assert image.size == size
+    # A size alone picks the orientation; a numbered layout keeps its own.
+    _, layout, _ = miq.render_bytes(AVATAR, "x", size=(540, 960), seed=1)
+    assert miq.REGISTRY[layout].orientation == "portrait"
+    png, layout, _ = miq.render_bytes(AVATAR, "x", layout=1, orientation="portrait")
+    assert layout == "classic"
+    with Image.open(io.BytesIO(png)) as image:
+        assert image.size == (640, 360)

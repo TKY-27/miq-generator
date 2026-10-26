@@ -32,6 +32,13 @@ from miq_text import EmojiImages, MixedFont, fit, wrap_words
 from miq_words import units
 
 SIZE = (640, 360)
+# Default output per orientation (MIQ_SIZE / MIQ_PORTRAIT_SIZE / MIQ_SQUARE_SIZE).
+SIZES = {"landscape": SIZE, "portrait": (540, 960), "square": (640, 640)}
+SIZE_ENV = {
+    "landscape": "MIQ_SIZE",
+    "portrait": "MIQ_PORTRAIT_SIZE",
+    "square": "MIQ_SQUARE_SIZE",
+}
 BASE_SIZE = (1920, 1080)
 ALIGN_CHOICES = ("center", "right")
 LINE_HEIGHT = 1.43
@@ -45,6 +52,8 @@ __all__ = [
     "SIZE",
     "choose_layout",
     "choose_style",
+    "default_size",
+    "find_layout",
     "compose",
     "dark_background",
     "find_font",
@@ -77,14 +86,45 @@ def resolve_size(value=None):
     return width, height
 
 
-def choose_layout(rng=None, category=None):
-    """Uniform draw over every layout (or one category)."""
+def default_size(orientation="landscape"):
+    """The output size used when none is given, per orientation."""
 
-    pool = miq_layouts.names(category)
-    if not pool:
+    if orientation not in SIZES:
+        raise ValueError(f"不明な向き: {orientation}（{', '.join(SIZES)}）")
+    return resolve_size(os.getenv(SIZE_ENV[orientation]) or SIZES[orientation])
+
+
+def find_layout(value):
+    """A layout name, its number (12) or a numeric string ("12") → its name."""
+
+    if isinstance(value, str) and value.strip().isdigit():
+        value = int(value.strip())
+    if isinstance(value, int) and not isinstance(value, bool):
+        spec = miq_layouts.by_number(value)
+        if spec is None:
+            raise ValueError(f"構図番号 {value} はありません（miq.py --list-layouts で一覧）。")
+        return spec.name
+    if value not in REGISTRY:
+        raise ValueError(f"不明なレイアウト: {value}")
+    return value
+
+
+def choose_layout(rng=None, category=None, orientation=None):
+    """Uniform draw over every layout (or one category / orientation).
+
+    A category with no layout in the orientation falls back to the whole
+    orientation, so ``cute`` + portrait still draws something.
+    """
+
+    if category is not None and category not in miq_layouts.categories():
         raise ValueError(
             f"不明なカテゴリ: {category}（{', '.join(miq_layouts.categories())}）"
         )
+    pool = miq_layouts.names(category, orientation) or miq_layouts.names(
+        None, orientation
+    )
+    if not pool:
+        raise ValueError(f"不明な向き: {orientation}")
     index = int((rng or random).random() * len(pool))
     return pool[min(index, len(pool) - 1)]
 
@@ -97,9 +137,17 @@ def installed_families(layout):
 
 
 def choose_style(
-    layout="auto", font_family="auto", *, category=None, seed=None, rng=None
+    layout="auto",
+    font_family="auto",
+    *,
+    category=None,
+    seed=None,
+    rng=None,
+    orientation=None,
 ):
     """Resolve ``auto`` choices to concrete ``(layout, font_family)`` names.
+
+    ``layout`` may also be a layout number. ``orientation`` narrows the draw.
 
     The same seed always gives the same pair, so a bot can show the user which
     style was drawn and re-render it later.
@@ -107,9 +155,8 @@ def choose_style(
 
     rng = rng or (random.Random(seed) if seed is not None else random)
     if layout in (None, "", "auto"):
-        layout = choose_layout(rng, category)
-    if layout not in REGISTRY:
-        raise ValueError(f"不明なレイアウト: {layout}")
+        layout = choose_layout(rng, category, orientation)
+    layout = find_layout(layout)
     if font_family in (None, "", "auto"):
         choices = installed_families(layout)
         if not choices:
@@ -206,11 +253,17 @@ def compose(
     markup=True,
     date=None,
     fast=False,
+    orientation=None,
 ):
     """Draw the quote and return ``(image, layout, font_family)``.
 
     ``fast=True`` skips the 2× supersampling of the designed layouts: about
     twice as fast, with slightly coarser hairlines and small print.
+
+    ``orientation`` (landscape / portrait / square) narrows the automatic
+    draw; without it the orientation follows ``size``. A layout chosen by
+    name or number keeps its own orientation, and without an explicit
+    ``size`` it gets that orientation's default size.
     """
 
     if markup:
@@ -227,28 +280,39 @@ def compose(
         name = clean(name, mentions)
     if not text.strip():
         raise ValueError("本文が空です。")
-    target = resolve_size(size)
+    explicit = size not in (None, "")
+    if orientation is None:
+        orientation = (
+            miq_layouts.orientation_of(resolve_size(size))
+            if explicit or os.getenv("MIQ_SIZE")
+            else "landscape"
+        )
+    elif orientation not in SIZES:
+        raise ValueError(f"不明な向き: {orientation}（{', '.join(SIZES)}）")
     align = resolve_align(align)
     body_file = font_file or os.getenv("MIQ_FONT")
+    style = dict(category=category, seed=seed, orientation=orientation)
     if body_file:
         chosen = custom_family(find_font(body_file))
-        layout, _ = choose_style(layout, "gothic", category=category, seed=seed)
+        layout, _ = choose_style(layout, "gothic", **style)
     else:
-        layout, key = choose_style(layout, font_family, category=category, seed=seed)
+        layout, key = choose_style(layout, font_family, **style)
         chosen = family(key)
         if not chosen.installed():
             raise ValueError(
                 f"書体 {chosen.label} がありません。python scripts/setup_fonts.py を実行してください。"
             )
     spec = REGISTRY[layout]
+    target = resolve_size(size) if explicit else default_size(spec.orientation)
     image = _open_image(avatar)
     images = EmojiImages(_emoji_font(emoji_font_file), custom_emojis)
     latin = italic_font_file or os.getenv("MIQ_ITALIC_FONT")
     latin = find_italic_font(latin) if latin else None
     # Native layouts paint at the output size; the others draw at up to 2×
     # (capped at 1920 wide) and downsample, which keeps small outputs crisp.
-    factor = 1 if spec.native or fast else min(2.0, max(1.0, 1920 / target[0]))
-    if factor > 1.5 and target[0] * 2 <= 1920:
+    design = spec.design[0]
+    factor = 1 if spec.native or fast else min(2.0, max(1.0, design / target[0]))
+    if factor > 1.5 and target[0] * 2 <= max(design, 1280):
         factor = 2
     work = (round(target[0] * factor), round(target[1] * factor))
     scene = Scene(
@@ -263,6 +327,8 @@ def compose(
         date,
         name_file=find_font(bold_font_file) if bold_font_file else None,
         latin_file=latin,
+        design=spec.design,
+        seed=seed,
     )
     scene.align = align
     canvas = spec.draw(scene)
@@ -368,7 +434,14 @@ def main():
     parser.add_argument("--align", choices=ALIGN_CHOICES)
     parser.add_argument("--emoji-font")
     parser.add_argument("--italic-font")
-    parser.add_argument("--layout", choices=["auto", *LAYOUTS], default="auto")
+    parser.add_argument(
+        "--layout", default="auto", help="auto、構図名または番号（--list-layouts）"
+    )
+    parser.add_argument(
+        "--orientation",
+        choices=miq_layouts.ORIENTATIONS,
+        help="auto抽選の向き（既定は --size から判断、なければ横）",
+    )
     parser.add_argument(
         "--category", choices=miq_layouts.categories(), help="auto抽選の系統を絞る"
     )
@@ -394,9 +467,12 @@ def main():
     )
     args = parser.parse_args()
     if args.list_layouts:
-        for name, spec in REGISTRY.items():
+        for name, spec in sorted(REGISTRY.items(), key=lambda kv: kv[1].number):
             fonts = ", ".join(spec.fonts)
-            print(f"{name:11} {spec.category:7} {spec.label}  [{fonts}]")
+            print(
+                f"{spec.number:3d} {name:13} {spec.orientation:9} {spec.category:7}"
+                f" {spec.label}  [{fonts}]"
+            )
         return
     if args.avatar is None or (args.text is None and args.text_file is None):
         parser.error("--avatar と --text（または --text-file）が必要です。")
@@ -425,6 +501,7 @@ def main():
             category=args.category,
             markup=not args.raw,
             fast=args.fast,
+            orientation=args.orientation,
         )
         _save(canvas, args.output)
     except (ValueError, OSError) as exc:

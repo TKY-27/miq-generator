@@ -87,7 +87,7 @@ def line_anchor(
     return min(max(target, low), high)
 
 
-@layout("classic", "クラシック", "classic", CLASSIC_FACES, native=True)
+@layout("classic", "クラシック", "classic", CLASSIC_FACES, number=1, native=True)
 def classic(s):
     from miq_text import credit
 
@@ -188,7 +188,7 @@ def _editorial(s, background, ink, secondary, slot, text_box, maximum, author, c
     return canvas
 
 
-@layout("mirrored", "ミラー", "classic", CLASSIC_FACES)
+@layout("mirrored", "ミラー", "classic", CLASSIC_FACES, number=2)
 def mirrored(s):
     return _editorial(
         s,
@@ -203,7 +203,7 @@ def mirrored(s):
     )
 
 
-@layout("magazine", "誌面", "classic", ("gothic", "mincho", "shippori", "dela"))
+@layout("magazine", "誌面", "classic", ("gothic", "mincho", "shippori", "dela"), number=3)
 def magazine(s):
     return _editorial(
         s,
@@ -218,7 +218,7 @@ def magazine(s):
     )
 
 
-@layout("literary", "文芸", "classic", ("mincho", "shippori", "gothic", "klee"))
+@layout("literary", "文芸", "classic", ("mincho", "shippori", "gothic", "klee"), number=4)
 def literary(s):
     slot = (545, 804, 865, 984) if s.attachment else (710, 833, 858, 981)
     author = (930, 876) if s.attachment else (900, 889)
@@ -240,7 +240,7 @@ def literary(s):
 # ---------------------------------------------------------------------------
 
 
-@layout("noir", "ノワール", "cool", ("gothic", "mincho", "shippori", "dela"))
+@layout("noir", "ノワール", "cool", ("gothic", "mincho", "shippori", "dela"), number=5)
 def noir(s):
     photo = fx.grayscale(fx.cover(s.image, s.size, (0.5, 0.35)), contrast=1.25)
     canvas = fill(s.size, "#050505")
@@ -279,7 +279,7 @@ def _shade(size, colors, angle, steps=None):
     return rgb
 
 
-@layout("cinema", "シネマ", "cool", ("gothic", "mincho", "maru"))
+@layout("cinema", "シネマ", "cool", ("gothic", "mincho", "maru"), number=6)
 def cinema(s):
     canvas = fill(s.size, "#000000")
     band = s.box((0, 140, 1920, 940))
@@ -324,7 +324,7 @@ def cinema(s):
     return canvas
 
 
-@layout("neon", "ネオン", "cool", ("gothic", "maru", "rocknroll", "dela", "code"))
+@layout("neon", "ネオン", "cool", ("gothic", "maru", "rocknroll", "dela", "code"), number=7)
 def neon(s):
     canvas = fx.radial(s.size, (34, 12, 54), (5, 4, 10), center=(0.75, 0.5), radius=0.6)
     cx, cy, r = 1460, 520, 250
@@ -369,7 +369,7 @@ def neon(s):
     return canvas
 
 
-@layout("glitch", "グリッチ", "cool", ("code", "dot", "gothic", "dela"))
+@layout("glitch", "グリッチ", "cool", ("code", "dot", "gothic", "dela"), number=8)
 def glitch(s):
     canvas = fill(s.size, "#0a0a0f")
     l, t, r, b = s.box((1180, 150, 1790, 760))
@@ -418,7 +418,7 @@ def glitch(s):
     return canvas
 
 
-@layout("terminal", "ターミナル", "cool", ("code", "dot"))
+@layout("terminal", "ターミナル", "cool", ("code", "dot"), number=9)
 def terminal(s):
     canvas = fx.gradient(s.size, [(28, 32, 44), (12, 14, 20)], 60)
     window = (110, 80, 1810, 1000)
@@ -494,7 +494,7 @@ def terminal(s):
     return canvas
 
 
-@layout("swiss", "スイス", "cool", ("gothic", "dela"))
+@layout("swiss", "スイス", "cool", ("gothic", "dela"), number=10)
 def swiss(s):
     canvas = fill(s.size, "#f2efe8")
     red = (226, 35, 26)
@@ -532,7 +532,7 @@ def swiss(s):
     return canvas
 
 
-@layout("brutal", "ブルータル", "cool", ("dela", "gothic", "rocknroll"))
+@layout("brutal", "ブルータル", "cool", ("dela", "gothic", "rocknroll"), number=11)
 def brutal(s):
     canvas = fill(s.size, "#ffd93d")
     dots = Image.new("L", s.size)
@@ -602,7 +602,7 @@ DUOTONES = (
 )
 
 
-@layout("duotone", "デュオトーン", "cool", ("dela", "gothic", "mincho", "shippori"))
+@layout("duotone", "デュオトーン", "cool", ("dela", "gothic", "mincho", "shippori"), number=12)
 def duotone(s):
     hue = fx.accent(s.image)
     # Pick the palette nearest the photo's own accent colour.
@@ -640,7 +640,7 @@ def duotone(s):
     return canvas
 
 
-@layout("aurora", "オーロラ", "cool", ("gothic", "maru", "mincho", "shippori"))
+@layout("aurora", "オーロラ", "cool", ("gothic", "maru", "mincho", "shippori"), number=13)
 def aurora(s):
     canvas = fill(s.size, "#060914")
     w, h = s.size
@@ -684,7 +684,7 @@ def aurora(s):
     return canvas
 
 
-@layout("blueprint", "ブループリント", "cool", ("code", "gothic"))
+@layout("blueprint", "ブループリント", "cool", ("code", "gothic"), number=14)
 def blueprint(s):
     canvas = fx.radial(
         s.size, (22, 84, 176), (10, 52, 128), center=(0.5, 0.45), radius=0.9
@@ -743,7 +743,7 @@ def blueprint(s):
     return canvas
 
 
-@layout("manga", "マンガ", "cool", ("gothic", "dela", "rocknroll", "maru"))
+@layout("manga", "マンガ", "cool", ("gothic", "dela", "rocknroll", "maru"), number=15)
 def manga(s):
     canvas = fill(s.size, "#fbfbf8")
     ink = (17, 17, 17)
@@ -824,7 +824,7 @@ def manga(s):
     return canvas
 
 
-@layout("tategaki", "縦書き", "cool", ("shippori", "mincho", "klee"))
+@layout("tategaki", "縦書き", "cool", ("shippori", "mincho", "klee"), number=16)
 def tategaki(s):
     from miq_vertical import draw_vertical, suits_vertical
 
@@ -878,7 +878,7 @@ def _graphemes(text):
 GOLD = ((176, 128, 52), (247, 226, 164), (196, 150, 70), (240, 214, 140))
 
 
-@layout("luxe", "ラグジュアリー", "cool", ("shippori", "mincho"))
+@layout("luxe", "ラグジュアリー", "cool", ("shippori", "mincho"), number=17)
 def luxe(s):
     canvas = fx.radial(
         s.size, (22, 40, 33), (7, 13, 11), center=(0.5, 0.42), radius=0.8
@@ -938,7 +938,7 @@ def luxe(s):
     return canvas
 
 
-@layout("newspaper", "新聞", "cool", ("mincho", "shippori", "gothic"))
+@layout("newspaper", "新聞", "cool", ("mincho", "shippori", "gothic"), number=18)
 def newspaper(s):
     paper = (238, 232, 218)
     ink = (26, 24, 22)
@@ -992,7 +992,7 @@ def newspaper(s):
     return canvas
 
 
-@layout("ticket", "チケット", "cool", ("code", "gothic", "dela"))
+@layout("ticket", "チケット", "cool", ("code", "gothic", "dela"), number=19)
 def ticket(s):
     accent = fx.accent(s.image)
     canvas = fx.gradient(
@@ -1076,7 +1076,7 @@ def ticket(s):
     return canvas
 
 
-@layout("nowplaying", "再生中", "cool", ("gothic", "maru"))
+@layout("nowplaying", "再生中", "cool", ("gothic", "maru"), number=20)
 def nowplaying(s):
     canvas = fx.backdrop(s.image, s.size, s.S(90), darken=0.45, saturation=1.35)
     fx.grain(canvas, 0.03)
@@ -1163,7 +1163,7 @@ def nowplaying(s):
     return canvas
 
 
-@layout("diagonal", "ダイアゴナル", "cool", ("gothic", "dela", "mincho"))
+@layout("diagonal", "ダイアゴナル", "cool", ("gothic", "dela", "mincho"), number=21)
 def diagonal(s):
     accent = fx.accent(s.image, value=(0.3, 0.75))
     canvas = fill(s.size, accent)
@@ -1195,7 +1195,7 @@ def diagonal(s):
     return canvas
 
 
-@layout("gallery", "ギャラリー", "cool", ("mincho", "shippori", "gothic"))
+@layout("gallery", "ギャラリー", "cool", ("mincho", "shippori", "gothic"), number=22)
 def gallery(s):
     wall = fx.radial(
         s.size, (250, 249, 245), (226, 223, 216), center=(0.3, 0.05), radius=1.0
@@ -1267,7 +1267,7 @@ def gallery(s):
 # ---------------------------------------------------------------------------
 
 
-@layout("kawaii", "パステル", "cute", ("maru", "rocknroll", "klee"))
+@layout("kawaii", "パステル", "cute", ("maru", "rocknroll", "klee"), number=23)
 def kawaii(s):
     canvas = fx.gradient(
         s.size, [(255, 214, 232), (228, 214, 255), (205, 239, 253)], 25
@@ -1356,7 +1356,7 @@ def kawaii(s):
     return canvas
 
 
-@layout("chat", "チャット", "cute", ("maru", "gothic", "rocknroll"))
+@layout("chat", "チャット", "cute", ("maru", "gothic", "rocknroll"), number=24)
 def chat(s):
     canvas = fx.gradient(s.size, [(220, 234, 248), (242, 236, 252)], 90)
     pad = 54
@@ -1446,7 +1446,7 @@ def chat(s):
     return canvas
 
 
-@layout("notebook", "ノート", "cute", ("klee", "maru"))
+@layout("notebook", "ノート", "cute", ("klee", "maru"), number=25)
 def notebook(s):
     canvas = fill(s.size, (255, 253, 245))
     y = 150
@@ -1522,7 +1522,7 @@ def notebook(s):
     return canvas
 
 
-@layout("pixel", "ピクセル", "cute", ("dot",))
+@layout("pixel", "ピクセル", "cute", ("dot",), number=26)
 def pixel(s):
     canvas = fx.pixelate(fx.cover(s.image, s.size), 48, 16)
     canvas = Image.blend(canvas, fill(s.size, (16, 14, 40)), 0.62)
@@ -1569,7 +1569,7 @@ HOLO = (
 )
 
 
-@layout("tcg", "トレカ", "cute", ("gothic", "mincho", "shippori", "maru"))
+@layout("tcg", "トレカ", "cute", ("gothic", "mincho", "shippori", "maru"), number=27)
 def tcg(s):
     canvas = fx.radial(
         s.size, (40, 28, 72), (10, 10, 20), center=(0.25, 0.5), radius=0.9
